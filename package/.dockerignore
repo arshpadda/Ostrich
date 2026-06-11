@@ -1,0 +1,19 @@
+# Exclude Python virtualenv and caches
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+
+# Exclude local configurations
+.env
+*.log
+
+# Exclude git metadata
+.git/
+.github/
+
+# Exclude test files (if desired in production build)
+tests/

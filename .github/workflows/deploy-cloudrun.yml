@@ -1,0 +1,42 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+  # Allow manual triggering
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    # Add "id-token" with the intended permissions for Google Cloud authentication
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          # TODO: Replace with your actual GCP Project ID
+          project_id: '${{ secrets.GCP_PROJECT_ID }}'
+          
+          # Recommended: Use Workload Identity Federation for keyless authentication
+          # workload_identity_provider: 'projects/123456789/locations/global/workloadIdentityPools/my-pool/providers/my-provider'
+          # service_account: 'my-service-account@YOUR_GCP_PROJECT_ID.iam.gserviceaccount.com'
+          
+          # Alternative: Use a Service Account JSON Key stored in GitHub Secrets
+          credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
+
+      - name: Deploy to Cloud Run from Source
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ostrich-controlplane
+          region: us-central1
+          source: ./package
+          flags: '--allow-unauthenticated --port=8000'

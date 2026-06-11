@@ -1,0 +1,1 @@
+"""Ostrich application package source."""
