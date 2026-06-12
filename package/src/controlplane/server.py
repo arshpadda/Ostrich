@@ -19,6 +19,7 @@ logger = logging.getLogger("ostrich-controlplane")
 
 from contextlib import asynccontextmanager
 from .auth import init_firebase
+from fastapi.middleware.cors import CORSMiddleware
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -32,6 +33,15 @@ app = FastAPI(
     description="Backend services for the Ostrich Chatbot platform",
     version="0.1.0",
     lifespan=lifespan,
+)
+
+# Add CORS middleware to allow requests from the frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],  # Vite's default dev server port
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

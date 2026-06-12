@@ -1,0 +1,29 @@
+mutation CreateSeedData @transaction {
+  user_insertMany(data: [
+    {
+      id: "550e8400-e29b-41d4-a716-446655440000",
+      username: "alice",
+      email: "alice@example.com"
+    },
+    {
+      id: "550e8400-e29b-41d4-a716-446655440001",
+      username: "bob",
+      email: "bob@example.com"
+    }
+  ])
+  sandbox_insertMany(data: [
+    {
+      id: "a1b2c3d4-e5f6-4789-a012-34567890abcd",
+      title: "Alice's Sandbox",
+      owner: {id: "550e8400-e29b-41d4-a716-446655440000"},
+      createdAt: "2023-10-27T10:00:00Z"
+    }
+  ])
+  collaborator_insertMany(data: [
+    {
+      userId: "550e8400-e29b-41d4-a716-446655440001",
+      sandboxId: "a1b2c3d4-e5f6-4789-a012-34567890abcd",
+      role: "editor"
+    }
+  ])
+}

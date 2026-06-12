@@ -1,0 +1,43 @@
+mutation CreateUserAccount($username: String!, $email: String!, $avatarUrl: String, $bio: String) @auth(level: PUBLIC) {
+  user_insert(data: {
+    username: $username,
+    email: $email,
+    avatarUrl: $avatarUrl,
+    bio: $bio
+  })
+}
+
+mutation CreateNewSandbox($title: String!, $description: String, $themeColor: String) @auth(level: USER) {
+  sandbox_insert(data: {
+    title: $title,
+    description: $description,
+    themeColor: $themeColor,
+    createdAt_expr: "request.time",
+    ownerId_expr: "auth.uid"
+  })
+}
+
+mutation AddAssetToSandbox($sandboxId: UUID!, $type: String!, $positionX: Float!, $positionY: Float!, $content: String, $label: String) @auth(level: USER) {
+  asset_insert(data: {
+    sandboxId: $sandboxId,
+    type: $type,
+    positionX: $positionX,
+    positionY: $positionY,
+    content: $content,
+    label: $label
+  })
+}
+
+query GetUserSandboxes @auth(level: USER) {
+  sandboxes(where: {ownerId: {eq_expr: "auth.uid"}}) {
+    id
+    title
+    createdAt
+    assets_on_sandbox {
+      type
+      label
+      positionX
+      positionY
+    }
+  }
+}

@@ -1,0 +1,39 @@
+type User @table {
+  username: String!
+  email: String!
+  avatarUrl: String
+  bio: String
+}
+
+type Sandbox @table {
+  owner: User!
+  title: String!
+  createdAt: Timestamp!
+  description: String
+  themeColor: String
+  isPublic: Boolean
+  isArchived: Boolean
+}
+
+type Asset @table {
+  sandbox: Sandbox!
+  type: String!
+  positionX: Float!
+  positionY: Float!
+  content: String
+  label: String
+}
+
+type Collaborator @table(key: ["user", "sandbox"]) {
+  user: User!
+  sandbox: Sandbox!
+  role: String!
+}
+
+type SandboxActivity @table {
+  sandbox: Sandbox!
+  user: User!
+  actionType: String!
+  timestamp: Timestamp!
+  metadata: String
+}
