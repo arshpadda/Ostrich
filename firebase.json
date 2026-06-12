@@ -1,0 +1,13 @@
+{
+  "auth": {
+    "providers": {
+      "anonymous": false,
+      "emailPassword": true,
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "Ostrich App",
+        "supportEmail": "aarshpadda1996@gmail.com",
+        "authorizedRedirectUris": []
+      }
+    }
+  }
+}

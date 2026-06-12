@@ -3,6 +3,10 @@ import sys
 from typing import Dict
 
 from fastapi import FastAPI
+from tortoise.contrib.fastapi import register_tortoise
+
+from .db import TORTOISE_ORM
+from .routers import users
 
 # Configure logging
 logging.basicConfig(
@@ -13,11 +17,21 @@ logging.basicConfig(
 
 logger = logging.getLogger("ostrich-controlplane")
 
+from contextlib import asynccontextmanager
+from .auth import init_firebase
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize Firebase Admin SDK
+    init_firebase()
+    yield
+
 # Instantiate FastAPI application
 app = FastAPI(
     title="Ostrich Chatbot API",
     description="Backend services for the Ostrich Chatbot platform",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 
@@ -35,3 +49,12 @@ async def health_check() -> Dict[str, str]:
     """
     logger.info("Health check endpoint hit")
     return {"status": "healthy"}
+
+app.include_router(users.router)
+
+register_tortoise(
+    app,
+    config=TORTOISE_ORM,
+    generate_schemas=False,
+    add_exception_handlers=True,
+)

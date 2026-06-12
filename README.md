@@ -1,5 +1,5 @@
 # Ostrich Monorepo
-
+![alt text](image.png)
 Welcome to the **Ostrich** monorepo. This repository contains the application packages and the cloud infrastructure deployment setup.
 
 ## Repository Structure
