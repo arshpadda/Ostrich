@@ -1,6 +1,7 @@
 import logging
 import sys
 from typing import Dict
+
 from fastapi import FastAPI
 
 # Configure logging
@@ -21,8 +22,13 @@ app = FastAPI(
 
 
 @app.get("/health", status_code=200)
-def health_check() -> Dict[str, str]:
+async def health_check() -> Dict[str, str]:
     """Health check endpoint to verify that the service is running.
+
+    Performance Note (Bolt ⚡):
+    Defined as `async def` because there are no blocking I/O operations.
+    FastAPI will run this directly on the main event loop rather than
+    dispatching it to an external threadpool, reducing overhead and latency.
 
     Returns:
         A dictionary containing the status of the application.

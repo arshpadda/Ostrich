@@ -1,6 +1,6 @@
 import logging
+
 import uvicorn
-from src.controlplane.server import app
 
 logger = logging.getLogger("ostrich-app")
 
