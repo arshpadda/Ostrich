@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+
 from src.controlplane.server import app
 
 client = TestClient(app)
