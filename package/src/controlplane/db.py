@@ -1,7 +1,9 @@
 from pydantic_settings import BaseSettings
 
+
 class Settings(BaseSettings):
-    DATABASE_URL: str = "postgres://postgres:postgres@localhost:5433/ostrich"
+    DATABASE_URL: str = "sqlite://:memory:"
+
 
 settings = Settings()
 

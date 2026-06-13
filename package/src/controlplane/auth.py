@@ -1,11 +1,14 @@
 import firebase_admin
-from firebase_admin import auth
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from firebase_admin import auth
 
 security = HTTPBearer()
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> dict:
     """Verify Firebase ID token and return decoded user payload."""
     try:
         decoded_token = auth.verify_id_token(credentials.credentials)
@@ -16,6 +19,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
             detail=f"Invalid authentication credentials: {str(e)}",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
 
 def init_firebase():
     """Initialize Firebase Admin SDK using Application Default Credentials."""
