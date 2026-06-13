@@ -1,13 +1,14 @@
 from tortoise.contrib.pydantic import pydantic_model_creator
-from .models import User
+from pydantic import BaseModel, ConfigDict
+from .models import User, ChatMessage
 
-# Schema for reading the user (includes id, created_at, etc.)
+# Create Pydantic schemas from Tortoise models
+UserCreate = pydantic_model_creator(User, name="UserCreate", exclude_readonly=True, exclude=("firebase_uid",))
 UserRead = pydantic_model_creator(User, name="UserRead")
+UserUpdate = pydantic_model_creator(User, name="UserUpdate", exclude_readonly=True, exclude=("firebase_uid", "email"))
 
-# Schema for creating the user (excludes id, created_at, updated_at)
-UserCreate = pydantic_model_creator(User, name="UserCreate", exclude_readonly=True)
+ChatMessageRead = pydantic_model_creator(ChatMessage, name="ChatMessageRead")
 
-# Schema for updating the user (optional fields)
-UserUpdate = pydantic_model_creator(
-    User, name="UserUpdate", exclude_readonly=True, optional=("email", "first_name", "last_name")
-)
+class ChatMessageCreate(BaseModel):
+    content: str
+    model_config = ConfigDict(from_attributes=True)

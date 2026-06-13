@@ -41,4 +41,4 @@ jobs:
           service: ostrich-controlplane
           region: us-central1
           source: ./package
-          flags: '--allow-unauthenticated --port=8000'
+          flags: '--port=8000 --add-cloudsql-instances="ostr-499118:us-central1:${{ secrets.CLOUDSQL_INSTANCE_NAME }}"'

@@ -30,7 +30,6 @@ deploy:
 		--source ./package \
 		--region $(REGION) \
 		--project $(PROJECT_ID) \
-		--allow-unauthenticated \
 		--port 8000 \
 		--add-cloudsql-instances="$(CLOUDSQL_CONNECTION_NAME)" \
 		--set-env-vars="DATABASE_URL=$(DATABASE_URL)"

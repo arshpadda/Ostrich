@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from tortoise.contrib.fastapi import register_tortoise
 
 from .db import TORTOISE_ORM
-from .routers import users
+from .routers import users, chat
 
 # Configure logging
 logging.basicConfig(
@@ -38,12 +38,15 @@ app = FastAPI(
 # Add CORS middleware to allow requests from the frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Vite's default dev server port
+    allow_origins=[
+        "http://localhost:5173",
+        "https://ostr-499118.web.app",
+        "https://ostr-499118.firebaseapp.com"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 @app.get("/health", status_code=200)
 async def health_check() -> Dict[str, str]:
@@ -61,6 +64,7 @@ async def health_check() -> Dict[str, str]:
     return {"status": "healthy"}
 
 app.include_router(users.router)
+app.include_router(chat.router)
 
 register_tortoise(
     app,

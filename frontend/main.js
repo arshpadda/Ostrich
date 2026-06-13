@@ -3,38 +3,47 @@ import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth'
 import { auth, provider } from './src/firebase'
 
 // DOM Elements
+const loginView = document.querySelector('#login-view')
+const chatView = document.querySelector('#chat-view')
 const loginBtn = document.querySelector('#login-btn')
 const logoutBtn = document.querySelector('#logout-btn')
-const profileCard = document.querySelector('#profile-card')
-const userInfo = document.querySelector('#user-info')
+const chatForm = document.querySelector('#chat-form')
+const chatInput = document.querySelector('#chat-input')
+const chatMessages = document.querySelector('#chat-messages')
 
-const API_URL = 'http://localhost:8000'
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+let currentUserToken = null;
 
 // Auth State Listener
 onAuthStateChanged(auth, async (user) => {
   if (user) {
     // User is signed in
-    loginBtn.style.display = 'none'
-    profileCard.classList.remove('hidden')
-    userInfo.innerHTML = '<p>Loading profile...</p>'
+    loginView.classList.add('hidden')
+    chatView.classList.remove('hidden')
     
     try {
-      const token = await user.getIdToken()
+      currentUserToken = await user.getIdToken()
       
-      // Attempt to create user or get profile
-      await createUserProfile(token, user)
-      const profile = await fetchUserProfile(token)
+      // Ensure user profile exists in Postgres
+      await createUserProfile(currentUserToken, user)
       
-      showProfile(profile)
+      // Load chat history
+      await loadChatHistory(currentUserToken)
+      
     } catch (error) {
-      console.error("Error fetching user profile", error)
-      userInfo.innerHTML = `<p class="error">Failed to load profile. Ensure the backend is running!</p>`
+      console.error("Error setting up chat", error)
+      alert("Failed to connect to backend. Please make sure the server is running.")
     }
   } else {
     // User is signed out
-    loginBtn.style.display = 'flex'
-    profileCard.classList.add('hidden')
-    userInfo.innerHTML = ''
+    currentUserToken = null;
+    loginView.classList.remove('hidden')
+    chatView.classList.add('hidden')
+    chatMessages.innerHTML = `
+      <div class="message bot-message">
+        <p>Welcome! Type a message below and it will be saved to your sandbox.</p>
+      </div>
+    `
   }
 })
 
@@ -52,7 +61,7 @@ logoutBtn.addEventListener('click', () => {
   signOut(auth)
 })
 
-// API Calls
+// API Calls - Auth
 async function createUserProfile(token, user) {
   const payload = {
     email: user.email,
@@ -70,25 +79,57 @@ async function createUserProfile(token, user) {
   }).catch(() => {}) // Ignore 400 user exists
 }
 
-async function fetchUserProfile(token) {
-  const res = await fetch(`${API_URL}/users/me`, {
-    headers: {
-      'Authorization': `Bearer ${token}`
-    }
+// API Calls - Chat
+async function loadChatHistory(token) {
+  const res = await fetch(`${API_URL}/chat/`, {
+    headers: { 'Authorization': `Bearer ${token}` }
   })
-  if (!res.ok) throw new Error("Failed to fetch")
-  return await res.json()
+  
+  if (res.ok) {
+    const messages = await res.json()
+    // Keep the welcome message if empty, otherwise render history
+    if (messages.length > 0) {
+      chatMessages.innerHTML = ''
+      messages.forEach(msg => {
+        appendMessage(msg.content, msg.is_bot)
+      })
+    }
+  }
 }
 
-// UI Rendering
-function showProfile(profile) {
-  userInfo.innerHTML = `
-    <div class="profile-avatar">${profile.first_name[0].toUpperCase()}</div>
-    <h2>Welcome, ${profile.first_name}!</h2>
-    <div class="profile-details">
-      <p><span>Email:</span> ${profile.email}</p>
-      <p><span>ID:</span> <small>${profile.id}</small></p>
-      <p><span>Joined:</span> ${new Date(profile.created_at).toLocaleDateString()}</p>
-    </div>
-  `
+// Handle sending new messages
+chatForm.addEventListener('submit', async (e) => {
+  e.preventDefault()
+  
+  const text = chatInput.value.trim()
+  if (!text || !currentUserToken) return
+  
+  // Immediately show in UI
+  appendMessage(text, false)
+  chatInput.value = ''
+  
+  try {
+    // Send to backend
+    await fetch(`${API_URL}/chat/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${currentUserToken}`
+      },
+      body: JSON.stringify({ content: text })
+    })
+  } catch (error) {
+    console.error("Failed to send message", error)
+    appendMessage("Failed to send message to server.", true)
+  }
+})
+
+function appendMessage(text, isBot) {
+  const msgDiv = document.createElement('div')
+  msgDiv.className = `message ${isBot ? 'bot-message' : 'user-message'}`
+  msgDiv.textContent = text
+  chatMessages.appendChild(msgDiv)
+  
+  // Scroll to bottom
+  chatMessages.scrollTop = chatMessages.scrollHeight
 }
