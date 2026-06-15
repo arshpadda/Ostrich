@@ -1,6 +1,7 @@
-from tortoise.contrib.pydantic import pydantic_model_creator
 from pydantic import BaseModel, ConfigDict
-from .models import User, ChatMessage
+from tortoise.contrib.pydantic import pydantic_model_creator, pydantic_queryset_creator
+
+from .models import ChatMessage, User
 
 # Create Pydantic schemas from Tortoise models
 UserCreate = pydantic_model_creator(User, name="UserCreate", exclude_readonly=True, exclude=("firebase_uid",))
@@ -8,6 +9,7 @@ UserRead = pydantic_model_creator(User, name="UserRead")
 UserUpdate = pydantic_model_creator(User, name="UserUpdate", exclude_readonly=True, exclude=("firebase_uid", "email"))
 
 ChatMessageRead = pydantic_model_creator(ChatMessage, name="ChatMessageRead")
+ChatMessageList = pydantic_queryset_creator(ChatMessage, name="ChatMessageList")
 
 class ChatMessageCreate(BaseModel):
     content: str

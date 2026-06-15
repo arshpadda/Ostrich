@@ -1,7 +1,7 @@
 import firebase_admin
-from firebase_admin import auth
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from firebase_admin import auth
 
 security = HTTPBearer()
 

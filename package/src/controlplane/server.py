@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from tortoise.contrib.fastapi import register_tortoise
 
 from .db import TORTOISE_ORM
-from .routers import users, chat
+from .routers import chat, users
 
 # Configure logging
 logging.basicConfig(
@@ -18,8 +18,11 @@ logging.basicConfig(
 logger = logging.getLogger("ostrich-controlplane")
 
 from contextlib import asynccontextmanager
-from .auth import init_firebase
+
 from fastapi.middleware.cors import CORSMiddleware
+
+from .auth import init_firebase
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
