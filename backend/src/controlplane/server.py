@@ -5,7 +5,7 @@ from typing import Dict
 from fastapi import FastAPI
 from tortoise.contrib.fastapi import register_tortoise
 
-from .db import TORTOISE_ORM
+from .core.config import TORTOISE_ORM
 from .routers import users, chat
 
 # Configure logging
@@ -18,7 +18,7 @@ logging.basicConfig(
 logger = logging.getLogger("ostrich-controlplane")
 
 from contextlib import asynccontextmanager
-from .auth import init_firebase
+from .core.auth import init_firebase
 from fastapi.middleware.cors import CORSMiddleware
 
 @asynccontextmanager
@@ -65,10 +65,12 @@ async def health_check() -> Dict[str, str]:
 
 app.include_router(users.router)
 app.include_router(chat.router)
+from .routers import ws
+app.include_router(ws.router)
 
 register_tortoise(
     app,
     config=TORTOISE_ORM,
-    generate_schemas=False,
+    generate_schemas=True,
     add_exception_handlers=True,
 )

@@ -2,9 +2,9 @@ import uuid
 from typing import List
 from fastapi import APIRouter, HTTPException, Depends
 
-from ..models import User
-from ..schemas import UserCreate, UserRead, UserUpdate
-from ..auth import get_current_user
+from ..database.models import User
+from ..database.schemas import UserCreate, UserRead, UserUpdate
+from ..core.auth import get_current_user
 
 router = APIRouter(prefix="/users", tags=["Users"])
 

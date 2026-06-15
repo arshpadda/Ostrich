@@ -27,7 +27,7 @@ help:
 deploy:
 	@echo "Deploying $(SERVICE_NAME) to Cloud Run in $(PROJECT_ID)..."
 	gcloud run deploy $(SERVICE_NAME) \
-		--source ./package \
+		--source ./backend \
 		--region $(REGION) \
 		--project $(PROJECT_ID) \
 		--port 8000 \

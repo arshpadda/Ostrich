@@ -8,11 +8,11 @@ ENV UV_LINK_MODE=copy
 WORKDIR /app
 
 # Copy dependency configuration files first to cache layers
-COPY pyproject.toml uv.lock README.md /app/
+COPY backend/pyproject.toml backend/uv.lock backend/README.md /app/
 RUN uv sync --frozen --no-install-project --no-dev
 
 # Copy application source files
-COPY src /app/src
+COPY backend/src /app/src
 
 # Synchronize the project (installs ostrich-app itself)
 RUN uv sync --frozen --no-dev

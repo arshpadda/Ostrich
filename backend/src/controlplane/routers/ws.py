@@ -1,0 +1,134 @@
+import json
+import asyncio
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends
+from firebase_admin import auth
+import redis.asyncio as redis
+from pydantic import BaseModel
+
+from ..core.config import settings
+from ..database.models import User, ChatMessage
+from ..services.orchestrator import provision_sandbox_pod
+
+router = APIRouter(prefix="/ws", tags=["WebSocket"])
+
+# Shared Redis pool across the router
+redis_pool = None
+
+@router.on_event("startup")
+async def startup_event():
+    global redis_pool
+    redis_pool = redis.ConnectionPool.from_url(
+        settings.REDIS_URL, 
+        decode_responses=True,
+        health_check_interval=30
+    )
+
+@router.on_event("shutdown")
+async def shutdown_event():
+    global redis_pool
+    if redis_pool:
+        await redis_pool.disconnect()
+
+async def verify_ws_token(token: str = Query(...)):
+    """Verify Firebase ID token from WebSocket query parameter."""
+    try:
+        decoded_token = auth.verify_id_token(token)
+        return decoded_token
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return None
+
+@router.websocket("/chat")
+async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
+    await websocket.accept()
+    
+    # 1. Authenticate User
+    decoded_token = await verify_ws_token(token)
+    if not decoded_token:
+        await websocket.send_text(json.dumps({"type": "error", "message": "Authentication failed"}))
+        await websocket.close(code=1008)
+        return
+        
+    firebase_uid = decoded_token.get("uid")
+    user_obj = await User.get_or_none(firebase_uid=firebase_uid)
+    if not user_obj:
+        await websocket.send_text(json.dumps({"type": "error", "message": "User profile not found"}))
+        await websocket.close(code=1008)
+        return
+
+    # 2. Provision Sandbox Pod
+    # We call the orchestrator to ensure a pod is running for this user
+    # In a real setup, we might want to make this async or run it in a threadpool to not block
+    provision_sandbox_pod(user_obj.id)
+
+    # 2. Setup Redis Channel
+    redis_client = redis.Redis(connection_pool=redis_pool)
+    pubsub = redis_client.pubsub()
+    channel_name = f"channel:sandbox:{user_obj.id}"
+    await pubsub.subscribe(channel_name)
+    
+    # Send a confirmation to the client
+    await websocket.send_text(json.dumps({
+        "type": "system", 
+        "message": "Connected to Control Plane Sandbox Channel"
+    }))
+
+    # 3. Read from Redis and forward to WebSocket
+    async def listen_to_redis():
+        try:
+            print(f"Backend listening to Redis channel: {channel_name}")
+            while True:
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                if message and message["type"] == "message":
+                    try:
+                        # Forward sandbox messages back to the frontend
+                        payload_str = message["data"]
+                        await websocket.send_text(payload_str)
+                        print("Backend successfully forwarded message to WebSocket")
+                        
+                        # Persist sandbox reply to PostgreSQL
+                        try:
+                            payload_json = json.loads(payload_str)
+                            if payload_json.get("role") == "bot":
+                                await ChatMessage.create(
+                                    user_id=user_obj.id,
+                                    content=payload_json.get("content", ""),
+                                    is_bot=True
+                                )
+                        except Exception as e:
+                            print(f"Error saving bot message to DB: {e}")
+                    except Exception as e:
+                        print(f"Error sending to WebSocket: {e}")
+                await asyncio.sleep(0.01)
+        except asyncio.CancelledError:
+            print("listen_to_redis task cancelled")
+
+    redis_task = asyncio.create_task(listen_to_redis())
+
+    # 4. Read from WebSocket and publish to Redis
+    try:
+        while True:
+            data = await websocket.receive_text()
+            
+            # Save the message to DB
+            msg_obj = await ChatMessage.create(
+                user_id=user_obj.id,
+                content=data,
+                is_bot=False
+            )
+            
+            # Publish to Sandbox
+            payload = {
+                "message_id": str(msg_obj.id),
+                "role": "user",
+                "content": data
+            }
+            await redis_client.publish(channel_name, json.dumps(payload))
+            
+    except WebSocketDisconnect:
+        pass
+    finally:
+        redis_task.cancel()
+        await pubsub.unsubscribe(channel_name)
+        await pubsub.close()

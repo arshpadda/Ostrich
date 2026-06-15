@@ -12,7 +12,9 @@ const chatInput = document.querySelector('#chat-input')
 const chatMessages = document.querySelector('#chat-messages')
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const WS_URL = API_URL.replace(/^http/, 'ws')
 let currentUserToken = null;
+let ws = null;
 
 // Auth State Listener
 onAuthStateChanged(auth, async (user) => {
@@ -29,6 +31,9 @@ onAuthStateChanged(auth, async (user) => {
       
       // Load chat history
       await loadChatHistory(currentUserToken)
+
+      // Connect WebSocket for bidirectional channel
+      connectWebSocket(currentUserToken)
       
     } catch (error) {
       console.error("Error setting up chat", error)
@@ -37,11 +42,15 @@ onAuthStateChanged(auth, async (user) => {
   } else {
     // User is signed out
     currentUserToken = null;
+    if (ws) {
+      ws.close()
+      ws = null;
+    }
     loginView.classList.remove('hidden')
     chatView.classList.add('hidden')
     chatMessages.innerHTML = `
       <div class="message bot-message">
-        <p>Welcome! Type a message below and it will be saved to your sandbox.</p>
+        <p>Welcome! Type a message below and it will be sent to your sandbox.</p>
       </div>
     `
   }
@@ -97,6 +106,34 @@ async function loadChatHistory(token) {
   }
 }
 
+// WebSocket Connection
+function connectWebSocket(token) {
+  if (ws) ws.close();
+  ws = new WebSocket(`${WS_URL}/ws/chat?token=${token}`);
+  
+  ws.onmessage = (event) => {
+    console.log("Raw WebSocket Message Received:", event.data);
+    try {
+      const data = JSON.parse(event.data);
+      if (data.type === 'system') {
+        console.log("System Message:", data.message);
+      } else if (data.content) {
+        // Assume messages coming back from ws are from the sandbox (bot)
+        if (data.role !== 'user') {
+          appendMessage(data.content, true);
+        }
+      }
+    } catch (e) {
+      // If it's not JSON, treat it as a raw string
+      appendMessage(event.data, true);
+    }
+  };
+  
+  ws.onclose = () => {
+    console.log("WebSocket closed");
+  };
+}
+
 // Handle sending new messages
 chatForm.addEventListener('submit', async (e) => {
   e.preventDefault()
@@ -108,19 +145,10 @@ chatForm.addEventListener('submit', async (e) => {
   appendMessage(text, false)
   chatInput.value = ''
   
-  try {
-    // Send to backend
-    await fetch(`${API_URL}/chat/`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${currentUserToken}`
-      },
-      body: JSON.stringify({ content: text })
-    })
-  } catch (error) {
-    console.error("Failed to send message", error)
-    appendMessage("Failed to send message to server.", true)
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(text);
+  } else {
+    appendMessage("Failed to send message: Sandbox disconnected.", true)
   }
 })
 
