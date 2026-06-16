@@ -15,8 +15,11 @@ async def list_messages(current_user: dict = Depends(get_current_user)):
     if not user_obj:
         raise HTTPException(status_code=404, detail="User not found")
 
-    messages = await ChatMessage.filter(user=user_obj).order_by("created_at")
-    return [await ChatMessageRead.from_tortoise_orm(msg) for msg in messages]
+    # Performance Note (Bolt ⚡):
+    # Using `from_queryset` instead of an async list comprehension with `from_tortoise_orm`.
+    # This executes the fetch and schema mapping in a more optimized batch manner,
+    # preventing Python-level async iteration overhead and avoiding potential N+1 queries.
+    return await ChatMessageRead.from_queryset(ChatMessage.filter(user=user_obj).order_by("created_at"))
 
 
 @router.post("/", response_model=ChatMessageRead, status_code=201)

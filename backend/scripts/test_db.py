@@ -1,9 +1,8 @@
 import asyncio
 
-from tortoise import Tortoise
-
 from src.controlplane.db import TORTOISE_ORM
 from src.controlplane.models import ChatMessage
+from tortoise import Tortoise
 
 
 async def main():
