@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from tortoise.contrib.fastapi import register_tortoise
 
 from .core.config import TORTOISE_ORM
-from .routers import users, chat
+from .routers import chat, users
 
 # Configure logging
 logging.basicConfig(
@@ -18,14 +18,18 @@ logging.basicConfig(
 logger = logging.getLogger("ostrich-controlplane")
 
 from contextlib import asynccontextmanager
-from .core.auth import init_firebase
+
 from fastapi.middleware.cors import CORSMiddleware
+
+from .core.auth import init_firebase
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Initialize Firebase Admin SDK
     init_firebase()
     yield
+
 
 # Instantiate FastAPI application
 app = FastAPI(
@@ -38,15 +42,12 @@ app = FastAPI(
 # Add CORS middleware to allow requests from the frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "https://ostr-499118.web.app",
-        "https://ostr-499118.firebaseapp.com"
-    ],
+    allow_origins=["http://localhost:5173", "https://ostr-499118.web.app", "https://ostr-499118.firebaseapp.com"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 @app.get("/health", status_code=200)
 async def health_check() -> Dict[str, str]:
@@ -63,9 +64,11 @@ async def health_check() -> Dict[str, str]:
     logger.info("Health check endpoint hit")
     return {"status": "healthy"}
 
+
 app.include_router(users.router)
 app.include_router(chat.router)
 from .routers import ws
+
 app.include_router(ws.router)
 
 register_tortoise(

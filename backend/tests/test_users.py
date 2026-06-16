@@ -1,18 +1,21 @@
-import pytest
-from fastapi.testclient import TestClient
-from tortoise.contrib.test import initializer, finalizer
-from src.controlplane.server import app
-from src.controlplane.auth import get_current_user
-
 import uuid
+
+from fastapi.testclient import TestClient
+
+from src.controlplane.auth import get_current_user
+from src.controlplane.server import app
 
 # Mock Firebase Auth dependency
 mock_uid = uuid.uuid4().hex
 mock_email = f"test_{mock_uid}@example.com"
+
+
 async def mock_get_current_user():
     return {"uid": mock_uid, "email": mock_email}
 
+
 app.dependency_overrides[get_current_user] = mock_get_current_user
+
 
 def test_user_crud():
     with TestClient(app) as client:

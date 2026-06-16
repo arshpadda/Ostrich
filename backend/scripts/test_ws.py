@@ -1,5 +1,7 @@
 import asyncio
+
 import websockets
+
 
 async def test():
     uri = "ws://localhost:8000/ws/chat?token=fake_token"
@@ -10,5 +12,6 @@ async def test():
             print("Received:", msg)
     except Exception as e:
         print("Error:", e)
+
 
 asyncio.run(test())

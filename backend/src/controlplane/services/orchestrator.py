@@ -1,8 +1,10 @@
-import os
-import uuid
 import logging
+import os
 import subprocess
+import uuid
+
 from kubernetes import client, config
+
 from ..core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -21,6 +23,7 @@ except config.ConfigException:
 # Global dictionary to keep track of local subprocesses
 local_sandboxes = {}
 
+
 def provision_sandbox_pod(user_id: uuid.UUID):
     """
     Provisions a dedicated Kubernetes Sandbox Pod for the given user_id using gVisor,
@@ -31,7 +34,7 @@ def provision_sandbox_pod(user_id: uuid.UUID):
         if str_id in local_sandboxes and local_sandboxes[str_id].poll() is None:
             logger.info(f"Local sandbox for {str_id} is already running.")
             return True
-            
+
         logger.info(f"Starting local sandbox subprocess for {str_id}")
         sandbox_path = os.path.join(os.path.dirname(__file__), "../../../../sandbox/main.py")
         env = os.environ.copy()
@@ -40,17 +43,13 @@ def provision_sandbox_pod(user_id: uuid.UUID):
         env["PYTHONUNBUFFERED"] = "1"
         if settings.GEMINI_API_KEY:
             env["GEMINI_API_KEY"] = settings.GEMINI_API_KEY
-        
+
         import sys
+
         # Start as background subprocess and pipe logs
         log_file_path = os.path.join(os.path.dirname(__file__), f"../../../../sandbox-{str_id}.log")
         log_file = open(log_file_path, "a")
-        proc = subprocess.Popen(
-            [sys.executable, sandbox_path], 
-            env=env,
-            stdout=log_file,
-            stderr=subprocess.STDOUT
-        )
+        proc = subprocess.Popen([sys.executable, sandbox_path], env=env, stdout=log_file, stderr=subprocess.STDOUT)
         local_sandboxes[str_id] = proc
         return True
 
@@ -77,37 +76,31 @@ def provision_sandbox_pod(user_id: uuid.UUID):
         env=[
             client.V1EnvVar(name="USER_ID", value=str(user_id)),
             client.V1EnvVar(name="REDIS_URL", value="redis://redis.redis-system.svc.cluster.local:6379"),
-            client.V1EnvVar(name="GOOGLE_API_KEY", value=os.getenv("GEMINI_API_KEY", settings.GEMINI_API_KEY)),
-            client.V1EnvVar(name="GEMINI_API_KEY", value=os.getenv("GEMINI_API_KEY", settings.GEMINI_API_KEY)),
         ],
         ports=[client.V1ContainerPort(container_port=8000, name="metrics")],
         resources=client.V1ResourceRequirements(
-            requests={"cpu": "250m", "memory": "256Mi"},
-            limits={"cpu": "500m", "memory": "512Mi"}
-        )
+            requests={"cpu": "250m", "memory": "256Mi"}, limits={"cpu": "500m", "memory": "512Mi"}
+        ),
     )
 
     pod_spec = client.V1PodSpec(
         containers=[container],
         restart_policy="Never",
         # Automatically terminate the pod after 30 minutes (1800 seconds)
-        active_deadline_seconds=1800 
+        active_deadline_seconds=1800,
     )
 
     pod = client.V1Pod(
         metadata=client.V1ObjectMeta(
             name=pod_name,
-            labels={
-                "app": "sandbox",
-                "user_id": str(user_id)
-            },
+            labels={"app": "sandbox", "user_id": str(user_id)},
             annotations={
                 "prometheus.io/scrape": "true",
                 "prometheus.io/port": "8000",
-                "prometheus.io/path": "/metrics"
-            }
+                "prometheus.io/path": "/metrics",
+            },
         ),
-        spec=pod_spec
+        spec=pod_spec,
     )
 
     try:

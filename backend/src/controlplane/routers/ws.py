@@ -1,12 +1,12 @@
-import json
 import asyncio
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends
-from firebase_admin import auth
+import json
+
 import redis.asyncio as redis
-from pydantic import BaseModel
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from firebase_admin import auth
 
 from ..core.config import settings
-from ..database.models import User, ChatMessage
+from ..database.models import ChatMessage, User
 from ..services.orchestrator import provision_sandbox_pod
 
 router = APIRouter(prefix="/ws", tags=["WebSocket"])
@@ -14,14 +14,12 @@ router = APIRouter(prefix="/ws", tags=["WebSocket"])
 # Shared Redis pool across the router
 redis_pool = None
 
+
 @router.on_event("startup")
 async def startup_event():
     global redis_pool
-    redis_pool = redis.ConnectionPool.from_url(
-        settings.REDIS_URL, 
-        decode_responses=True,
-        health_check_interval=30
-    )
+    redis_pool = redis.ConnectionPool.from_url(settings.REDIS_URL, decode_responses=True, health_check_interval=30)
+
 
 @router.on_event("shutdown")
 async def shutdown_event():
@@ -29,27 +27,30 @@ async def shutdown_event():
     if redis_pool:
         await redis_pool.disconnect()
 
+
 async def verify_ws_token(token: str = Query(...)):
     """Verify Firebase ID token from WebSocket query parameter."""
     try:
         decoded_token = auth.verify_id_token(token)
         return decoded_token
-    except Exception as e:
+    except Exception:
         import traceback
+
         traceback.print_exc()
         return None
+
 
 @router.websocket("/chat")
 async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
     await websocket.accept()
-    
+
     # 1. Authenticate User
     decoded_token = await verify_ws_token(token)
     if not decoded_token:
         await websocket.send_text(json.dumps({"type": "error", "message": "Authentication failed"}))
         await websocket.close(code=1008)
         return
-        
+
     firebase_uid = decoded_token.get("uid")
     user_obj = await User.get_or_none(firebase_uid=firebase_uid)
     if not user_obj:
@@ -67,12 +68,9 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
     pubsub = redis_client.pubsub()
     channel_name = f"channel:sandbox:{user_obj.id}"
     await pubsub.subscribe(channel_name)
-    
+
     # Send a confirmation to the client
-    await websocket.send_text(json.dumps({
-        "type": "system", 
-        "message": "Connected to Control Plane Sandbox Channel"
-    }))
+    await websocket.send_text(json.dumps({"type": "system", "message": "Connected to Control Plane Sandbox Channel"}))
 
     # 3. Read from Redis and forward to WebSocket
     async def listen_to_redis():
@@ -86,15 +84,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                         payload_str = message["data"]
                         await websocket.send_text(payload_str)
                         print("Backend successfully forwarded message to WebSocket")
-                        
+
                         # Persist sandbox reply to PostgreSQL
                         try:
                             payload_json = json.loads(payload_str)
                             if payload_json.get("role") == "bot":
                                 await ChatMessage.create(
-                                    user_id=user_obj.id,
-                                    content=payload_json.get("content", ""),
-                                    is_bot=True
+                                    user_id=user_obj.id, content=payload_json.get("content", ""), is_bot=True
                                 )
                         except Exception as e:
                             print(f"Error saving bot message to DB: {e}")
@@ -110,22 +106,14 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
     try:
         while True:
             data = await websocket.receive_text()
-            
+
             # Save the message to DB
-            msg_obj = await ChatMessage.create(
-                user_id=user_obj.id,
-                content=data,
-                is_bot=False
-            )
-            
+            msg_obj = await ChatMessage.create(user_id=user_obj.id, content=data, is_bot=False)
+
             # Publish to Sandbox
-            payload = {
-                "message_id": str(msg_obj.id),
-                "role": "user",
-                "content": data
-            }
+            payload = {"message_id": str(msg_obj.id), "role": "user", "content": data}
             await redis_client.publish(channel_name, json.dumps(payload))
-            
+
     except WebSocketDisconnect:
         pass
     finally:
