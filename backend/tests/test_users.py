@@ -2,7 +2,7 @@ import uuid
 
 from fastapi.testclient import TestClient
 
-from src.controlplane.auth import get_current_user
+from src.controlplane.core.auth import get_current_user
 from src.controlplane.server import app
 
 # Mock Firebase Auth dependency
