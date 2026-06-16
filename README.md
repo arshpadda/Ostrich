@@ -1,44 +1,59 @@
 # Ostrich Monorepo
 ![alt text](image.png)
-Welcome to the **Ostrich** monorepo. This repository contains the application packages and the cloud infrastructure deployment setup.
+Welcome to the **Ostrich** monorepo. Ostrich is a modern, enterprise-grade, cloud-native GenAI platform. It is designed around a Zero-Trust Kubernetes architecture, separating the Control Plane (FastAPI) from isolated, dynamic AI Sandboxes (LangGraph).
 
-## Repository Structure
+## 🏗 Architecture Overview
+
+Ostrich uses a microservice architecture deployed on Kubernetes:
+
+1. **Backend (Control Plane)**: A robust `FastAPI` service that handles user authentication, PostgreSQL database operations (via `TortoiseORM`), and orchestrates the dynamic provisioning of sandbox environments for users.
+2. **Frontend**: A lightning-fast, modern React application powered by `Vite`.
+3. **Sandbox (Data Plane)**: Dynamic, ephemeral worker pods powered by `LangGraph` and `LiteLLM`. Each user gets their own isolated Sandbox pod to execute AI tasks.
+4. **AI Gateway (Zero-Trust)**: A centralized `LiteLLM Proxy` running in the `ai-gateway` namespace. Sandboxes are physically blocked from the internet via strict `NetworkPolicies`. They route all LLM requests through this central gateway, ensuring API keys are never exposed to the sandbox environments.
+5. **Observability**: A native Kubernetes `Prometheus` deployment scrapes metrics from both the Control Plane (`prometheus-fastapi-instrumentator`) and the Sandboxes (`opentelemetry`). 
+
+## 📁 Repository Structure
 
 ```text
 Ostrich/
-├── .gitignore             # Git ignore patterns (Python, Terraform, etc.)
-├── GEMINI.MD              # Gemini API integration and AI agent guidelines
-├── README.md              # Root documentation
-├── package/               # Application codebase
-│   ├── pyproject.toml     # Package configuration & dependencies
+├── .github/workflows/     # Automated CI/CD Pipelines (Ruff, Pytest)
+├── backend/               # FastAPI Control Plane
 │   ├── src/               # Application source code
-│   │   ├── __init__.py
-│   │   └── main.py
-│   └── tests/             # Package test suite
-├── infrastructure/        # Infrastructure as Code (IaC)
-│   ├── README.md          # Infrastructure overview
-│   ├── aws/               # AWS infrastructure deployment placeholders
-│   │   └── main.tf
-│   └── gcp/               # GCP infrastructure deployment placeholders
-│       └── main.tf
-└── system_design/         # High-level system design documents and diagrams
-    └── README.md
+│   ├── scripts/           # Diagnostic and DB scripts
+│   ├── pyproject.toml     # uv dependencies and ruff configuration
+│   └── backend.Dockerfile
+├── frontend/              # React / Vite Application
+├── sandbox/               # LangGraph Agent logic
+│   ├── main.py            # Async Pub/Sub LangGraph loop
+│   ├── requirements.txt   # Dependencies
+│   └── sandbox.Dockerfile
+├── infrastructure/        # Infrastructure as Code & Kubernetes Manifests
+│   ├── gcp/               # Prometheus, LiteLLM Proxy, and Network Policies
+│   └── redis-k8s.yaml     # Redis system for Pub/Sub and Rate Limiting
+└── .pre-commit-config.yaml # Local git hooks for PEP-8 compliance
 ```
 
-## Getting Started
+## 🚀 Getting Started
 
 ### Prerequisites
 
 - Python 3.10+
-- [uv](https://github.com/astral-sh/uv) (recommended)
-- [Terraform](https://www.terraform.io/) (for infrastructure management)
+- [uv](https://github.com/astral-sh/uv) (for ultra-fast dependency management)
+- Docker & Kubernetes (e.g., `kind`, `minikube`, or Docker Desktop)
 
-### Local Application Setup
+### 1. Code Quality & Pre-commit Hooks
 
-To install and run the application locally:
-
+Ostrich strictly enforces PEP-8 standards using `ruff`. Before committing any code, ensure you have the git hooks installed:
 ```bash
-cd package
+uv tool install pre-commit
+pre-commit install
+```
+
+### 2. Local Backend Setup
+
+To run the FastAPI Control Plane locally:
+```bash
+cd backend
 # Sync and create virtual environment
 uv sync
 
@@ -46,22 +61,36 @@ uv sync
 uv run python -m src.main
 ```
 
-### Infrastructure Management
+### 3. Kubernetes Infrastructure
 
-Refer to the documentation in [infrastructure/README.md](infrastructure/README.md) for details on provisioning cloud resources via Terraform.
+The Control Plane dynamically spawns Sandbox pods inside the `sandbox-chat` namespace. You must deploy the foundational infrastructure first:
 
-## API Documentation
+```bash
+# 1. Deploy Redis (Used for Pub/Sub between Control Plane and Sandboxes)
+kubectl apply -f infrastructure/redis-k8s.yaml
 
-The control plane exposes the following API endpoints. All `/users` endpoints require a valid **Firebase ID Token** passed via the `Authorization: Bearer <TOKEN>` header.
+# 2. Deploy the Zero-Trust AI Gateway
+export $(grep -v '^#' .env | xargs)
+kubectl create namespace ai-gateway
+kubectl create secret generic litellm-secrets --from-literal=GEMINI_API_KEY=$GEMINI_API_KEY -n ai-gateway
+kubectl apply -f infrastructure/gcp/litellm-proxy.yaml
+kubectl apply -f infrastructure/gcp/sandbox-network-policy.yaml
 
-### Health Check
-- `GET /health`: Verify that the service is running.
+# 3. Deploy Prometheus Observability
+kubectl apply -f infrastructure/gcp/prometheus.yaml
+```
 
-### Users (Authentication Required)
-- `POST /users/`: Create a new PostgreSQL user profile. The email address will be safely extracted from the Firebase ID Token and linked via the token's `uid`.
-- `GET /users/me`: Retrieve the profile of the currently authenticated user.
-- `GET /users/{user_id}`: Retrieve a specific user profile. Users can only fetch their own records.
-- `PUT /users/{user_id}`: Update a user profile (e.g., `first_name`, `last_name`). Users can only update their own records.
-- `DELETE /users/{user_id}`: Delete a user profile. Users can only delete their own records.
+## 🔌 API Documentation
 
-**Note:** You can explore and test the interactive API documentation by running the app and navigating to `http://localhost:8000/docs` (Swagger UI).
+The control plane exposes the following core endpoints. Interactive documentation is available at `http://localhost:8000/docs`.
+
+### Websockets (Chat)
+- `WS /ws/chat?token=<TOKEN>`: Opens a persistent WebSocket connection. The backend authenticates the user, orchestrates a new Sandbox Pod in Kubernetes, and bridges communication between the WebSocket and the Redis Pub/Sub channel.
+
+### Users (Firebase Auth Required)
+- `POST /users/`: Create a new PostgreSQL user profile. 
+- `GET /users/me`: Retrieve the authenticated profile.
+- `PUT /users/{user_id}`: Update a user profile.
+
+### Metrics
+- `GET /metrics`: Prometheus scraping endpoint for Control Plane metrics.
