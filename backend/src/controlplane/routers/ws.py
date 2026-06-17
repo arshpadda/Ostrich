@@ -111,6 +111,10 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
         while True:
             data = await websocket.receive_text()
 
+            # Ensure the sandbox is actually running before sending the message!
+            # If it was killed by TTL or manual deletion, this spins it back up.
+            provision_sandbox_pod(user_obj.id)
+
             # Save the message to DB
             msg_obj = await ChatMessage.create(user_id=user_obj.id, content=data, is_bot=False)
 

@@ -61,8 +61,12 @@ def provision_sandbox_pod(user_id: uuid.UUID):
     try:
         existing_pod = v1.read_namespaced_pod(name=pod_name, namespace=namespace)
         if existing_pod:
-            logger.info(f"Sandbox pod {pod_name} already exists.")
-            return True
+            if existing_pod.status.phase in ["Failed", "Succeeded"]:
+                logger.info(f"Sandbox pod {pod_name} is in {existing_pod.status.phase} state. Deleting to recreate.")
+                v1.delete_namespaced_pod(name=pod_name, namespace=namespace, grace_period_seconds=0)
+            else:
+                logger.info(f"Sandbox pod {pod_name} already exists and is in {existing_pod.status.phase} state.")
+                return True
     except client.exceptions.ApiException as e:
         if e.status != 404:
             logger.error(f"Error checking for pod {pod_name}: {e}")
@@ -76,18 +80,22 @@ def provision_sandbox_pod(user_id: uuid.UUID):
         env=[
             client.V1EnvVar(name="USER_ID", value=str(user_id)),
             client.V1EnvVar(name="REDIS_URL", value="redis://redis.redis-system.svc.cluster.local:6379"),
+            client.V1EnvVar(name="GCS_BUCKET_NAME", value="ostrich-agent-workspaces"),
         ],
         ports=[client.V1ContainerPort(container_port=8000, name="metrics")],
         resources=client.V1ResourceRequirements(
             requests={"cpu": "250m", "memory": "256Mi"}, limits={"cpu": "500m", "memory": "512Mi"}
         ),
+        volume_mounts=[client.V1VolumeMount(mount_path="/workspace", name="workspace-vol")],
     )
 
     pod_spec = client.V1PodSpec(
         containers=[container],
         restart_policy="Never",
+        service_account_name="sandbox-agent-sa",
         # Automatically terminate the pod after 30 minutes (1800 seconds)
         active_deadline_seconds=1800,
+        volumes=[client.V1Volume(name="workspace-vol", empty_dir=client.V1EmptyDirVolumeSource())],
     )
 
     pod = client.V1Pod(

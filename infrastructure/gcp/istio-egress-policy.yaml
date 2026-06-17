@@ -1,0 +1,23 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: ServiceEntry
+metadata:
+  name: weather-api-egress
+  namespace: sandbox-chat
+spec:
+  # The exact hostnames we want the Envoy Proxy to allow
+  hosts:
+  - wttr.in
+  - pypi.org
+  - files.pythonhosted.org
+  - registry.npmjs.org
+  - github.com
+  - api.github.com
+  - storage.googleapis.com
+  ports:
+  - number: 443
+    name: https
+    protocol: HTTPS
+  # Resolve the IP dynamically using DNS
+  resolution: DNS
+  # Tell Istio this is an external service outside our cluster
+  location: MESH_EXTERNAL

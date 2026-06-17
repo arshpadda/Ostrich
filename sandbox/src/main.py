@@ -1,19 +1,16 @@
-import os
 import json
-import redis
 import logging
-import litellm
-from prometheus_client import start_http_server
-from opentelemetry import metrics
-from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.exporter.prometheus import PrometheusMetricReader
-from typing import Annotated
-from typing_extensions import TypedDict
+import os
 
-from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages
-from langchain_community.chat_models import ChatLiteLLM
+import litellm
+import redis
 from langchain_core.messages import HumanMessage
+from opentelemetry import metrics
+from opentelemetry.exporter.prometheus import PrometheusMetricReader
+from opentelemetry.sdk.metrics import MeterProvider
+from prometheus_client import start_http_server
+
+from src.agent import build_graph
 
 # Initialize OpenTelemetry Metrics (Prometheus Scraping)
 metric_reader = PrometheusMetricReader()
@@ -33,40 +30,13 @@ litellm.success_callback = ["opentelemetry"]
 litellm.failure_callback = ["opentelemetry"]
 
 # Configure basic logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("sandbox-agent")
 
 # Get environment variables injected by Kubernetes Orchestrator
 USER_ID = os.getenv("USER_ID")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 CHANNEL_NAME = f"channel:sandbox:{USER_ID}"
-
-
-# Define the State
-class State(TypedDict):
-    messages: Annotated[list, add_messages]
-
-
-def build_graph():
-    # Initialize the Gemini Model via our internal Zero-Trust AI Gateway
-    llm = ChatLiteLLM(
-        model="openai/gemini-2.5-flash",
-        api_base="http://litellm-proxy.ai-gateway.svc.cluster.local:4000",
-        api_key="sk-internal-proxy-key",  # Dummy key for internal auth
-    )
-
-    def chatbot(state: State):
-        response = llm.invoke(state["messages"])
-        return {"messages": [response]}
-
-    graph_builder = StateGraph(State)
-    graph_builder.add_node("chatbot", chatbot)
-    graph_builder.add_edge(START, "chatbot")
-    graph_builder.add_edge("chatbot", END)
-
-    return graph_builder.compile()
 
 
 def main():
@@ -135,11 +105,7 @@ def main():
                             or "resource_exhausted" in err_str
                         ):
                             error_msg = "I am currently experiencing high traffic and have been rate-limited by the AI provider. Please try again in a minute."
-                        elif (
-                            "503" in err_str
-                            or "unavailable" in err_str
-                            or "high demand" in err_str
-                        ):
+                        elif "503" in err_str or "unavailable" in err_str or "high demand" in err_str:
                             error_msg = "The AI model is currently experiencing high demand and is unavailable. Please try again later."
 
                         # Publish the error response back to the channel
