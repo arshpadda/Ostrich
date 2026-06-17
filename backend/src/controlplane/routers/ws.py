@@ -59,9 +59,11 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
         return
 
     # 2. Provision Sandbox Pod
-    # We call the orchestrator to ensure a pod is running for this user
-    # In a real setup, we might want to make this async or run it in a threadpool to not block
-    provision_sandbox_pod(user_obj.id)
+    # Performance Note (Bolt ⚡):
+    # provision_sandbox_pod is a synchronous blocking call (uses subprocess.Popen or kubernetes client).
+    # Calling it directly in this async route blocks the entire FastAPI event loop, freezing other requests.
+    # Offloading it to a threadpool via asyncio.to_thread fixes this bottleneck.
+    await asyncio.to_thread(provision_sandbox_pod, user_obj.id)
 
     # 2. Setup Redis Channel
     redis_client = redis.Redis(connection_pool=redis_pool)
@@ -76,8 +78,11 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
     async def listen_to_redis():
         try:
             print(f"Backend listening to Redis channel: {channel_name}")
-            while True:
-                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+            # Performance Note (Bolt ⚡):
+            # Using async for pubsub.listen() instead of a while loop with get_message() and asyncio.sleep().
+            # This completely avoids unnecessary polling and CPU wakeups, drastically reducing overhead
+            # and minimizing latency for incoming pubsub messages.
+            async for message in pubsub.listen():
                 if message and message["type"] == "message":
                     try:
                         # Forward sandbox messages back to the frontend
@@ -96,7 +101,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                             print(f"Error saving bot message to DB: {e}")
                     except Exception as e:
                         print(f"Error sending to WebSocket: {e}")
-                await asyncio.sleep(0.01)
         except asyncio.CancelledError:
             print("listen_to_redis task cancelled")
 
