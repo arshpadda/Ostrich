@@ -113,7 +113,11 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
 
             # Ensure the sandbox is actually running before sending the message!
             # If it was killed by TTL or manual deletion, this spins it back up.
-            provision_sandbox_pod(user_obj.id)
+            # Performance Note (Bolt ⚡):
+            # provision_sandbox_pod is a synchronous blocking call. Calling it directly here
+            # inside the while loop blocks the main event loop. We use asyncio.to_thread
+            # to offload it and prevent freezing concurrent WebSocket and API requests.
+            await asyncio.to_thread(provision_sandbox_pod, user_obj.id)
 
             # Save the message to DB
             msg_obj = await ChatMessage.create(user_id=user_obj.id, content=data, is_bot=False)
