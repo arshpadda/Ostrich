@@ -99,9 +99,12 @@ async function loadChatHistory(token) {
     // Keep the welcome message if empty, otherwise render history
     if (messages.length > 0) {
       chatMessages.innerHTML = ''
+      const fragment = document.createDocumentFragment()
       messages.forEach(msg => {
-        appendMessage(msg.content, msg.is_bot)
+        appendMessage(msg.content, msg.is_bot, fragment)
       })
+      chatMessages.appendChild(fragment)
+      chatMessages.scrollTop = chatMessages.scrollHeight
     }
   }
 }
@@ -152,12 +155,14 @@ chatForm.addEventListener('submit', async (e) => {
   }
 })
 
-function appendMessage(text, isBot) {
+function appendMessage(text, isBot, targetNode = chatMessages) {
   const msgDiv = document.createElement('div')
   msgDiv.className = `message ${isBot ? 'bot-message' : 'user-message'}`
   msgDiv.textContent = text
-  chatMessages.appendChild(msgDiv)
+  targetNode.appendChild(msgDiv)
   
-  // Scroll to bottom
-  chatMessages.scrollTop = chatMessages.scrollHeight
+  // Only scroll if we are appending directly to the visible chat container
+  if (targetNode === chatMessages) {
+    chatMessages.scrollTop = chatMessages.scrollHeight
+  }
 }
