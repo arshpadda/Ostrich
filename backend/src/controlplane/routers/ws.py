@@ -31,7 +31,11 @@ async def shutdown_event():
 async def verify_ws_token(token: str = Query(...)):
     """Verify Firebase ID token from WebSocket query parameter."""
     try:
-        decoded_token = auth.verify_id_token(token)
+        # Performance Note (Bolt ⚡):
+        # auth.verify_id_token is a synchronous blocking call.
+        # Calling it directly in an async route blocks the entire FastAPI event loop,
+        # freezing other requests. Offloading it to a threadpool via asyncio.to_thread fixes this.
+        decoded_token = await asyncio.to_thread(auth.verify_id_token, token)
         return decoded_token
     except Exception:
         import traceback
