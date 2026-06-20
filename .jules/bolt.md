@@ -14,3 +14,7 @@
 ## 2026-06-19 - Prevent DOM Layout Thrashing in List Rendering
 **Learning:** Iteratively appending elements to the DOM and reading layout properties like `scrollHeight` synchronously causes forced reflows (layout thrashing) equal to the number of iterations (O(N) layout thrashing).
 **Action:** Batch DOM updates using `DocumentFragment` and read/write layout properties only once after appending the fragment to the DOM.
+
+## 2026-06-20 - Unblocking the FastAPI Event Loop in Auth Dependency
+**Learning:** Calling synchronous blocking functions (like `auth.verify_id_token` for Firebase authentication) directly inside an `async def` function or dependency blocks the entire main event loop, causing latency and freezing other concurrent requests during authentication.
+**Action:** Always use `await asyncio.to_thread(func, args)` when calling blocking synchronous authentication or network code from an async dependency or endpoint.
