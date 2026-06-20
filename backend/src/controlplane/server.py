@@ -1,21 +1,14 @@
-import logging
-import sys
 from typing import Dict
 
 from fastapi import FastAPI
 from tortoise.contrib.fastapi import register_tortoise
 
 from .core.config import TORTOISE_ORM
+from .core.logging_config import logging_middleware, setup_logging
 from .routers import chat, users
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
-
-logger = logging.getLogger("ostrich-controlplane")
+# Configure structured JSON logging
+logger = setup_logging()
 
 from contextlib import asynccontextmanager
 
@@ -38,6 +31,9 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Register logging middleware
+app.middleware("http")(logging_middleware)
 
 # Add CORS middleware to allow requests from the frontend
 app.add_middleware(

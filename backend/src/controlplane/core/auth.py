@@ -10,6 +10,9 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     """Verify Firebase ID token and return decoded user payload."""
     try:
         decoded_token = auth.verify_id_token(credentials.credentials)
+        from .logging_config import user_id_context
+
+        user_id_context.set(decoded_token.get("uid", ""))
         return decoded_token
     except Exception as e:
         import traceback

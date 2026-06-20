@@ -12,6 +12,7 @@ dependencies = [
     "langchain-google-genai>=4.2.5",
     "langgraph>=1.2.2",
     "pydantic-settings>=2.14.1",
+    "python-json-logger>=2.0.7",
     "redis>=8.0.0",
     "tomlkit>=0.15.0",
     "tortoise-orm[asyncpg]>=0.25.4",
