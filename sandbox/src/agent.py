@@ -5,6 +5,7 @@ from langchain_community.chat_models import ChatLiteLLM
 from langchain_core.messages import SystemMessage
 from langgraph.graph import START, StateGraph
 from langgraph.graph.message import add_messages
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 from typing_extensions import TypedDict
 
@@ -16,7 +17,7 @@ class State(TypedDict):
     messages: Annotated[list, add_messages]
 
 
-def build_graph():
+def build_graph() -> CompiledStateGraph:
     # Initialize the Gemini Model via our internal Zero-Trust AI Gateway
     if os.getenv("GEMINI_API_KEY"):
         # Local standalone testing override
@@ -38,7 +39,7 @@ def build_graph():
         prompt_content = f.read()
     system_prompt = SystemMessage(content=prompt_content)
 
-    def chatbot(state: State):
+    def chatbot(state: State) -> dict:
         # 2. Invoke the LLM with the tools bound
         response = llm_with_tools.invoke([system_prompt] + state["messages"])
         return {"messages": [response]}

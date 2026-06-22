@@ -1,14 +1,24 @@
 import json
 import logging
 import os
+import sys
 
 import litellm
 import redis
 from langchain_core.messages import HumanMessage
-from opentelemetry import metrics
+from opentelemetry import metrics, trace
+from opentelemetry._logs import set_logger_provider
+from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
+from opentelemetry.propagate import extract
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from prometheus_client import start_http_server
+from pythonjsonlogger import jsonlogger
 
 from src.agent import build_graph
 
@@ -29,9 +39,45 @@ message_counter = meter.create_counter(
 litellm.success_callback = ["opentelemetry"]
 litellm.failure_callback = ["opentelemetry"]
 
-# Configure basic logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+# Configure structured JSON logging
 logger = logging.getLogger("sandbox-agent")
+
+# Set up JSON stdout handler
+stream_handler = logging.StreamHandler(sys.stdout)
+formatter = jsonlogger.JsonFormatter(
+    "%(asctime)s %(levelname)s %(name)s %(message)s", rename_fields={"levelname": "severity", "asctime": "timestamp"}
+)
+stream_handler.setFormatter(formatter)
+
+# Set up OTel OTLP Exporter
+logger_provider = LoggerProvider()
+set_logger_provider(logger_provider)
+
+try:
+    otlp_exporter = OTLPLogExporter()
+    logger_provider.add_log_record_processor(BatchLogRecordProcessor(otlp_exporter))
+    otel_handler = LoggingHandler(level=logging.NOTSET, logger_provider=logger_provider)
+except Exception as e:
+    sys.stderr.write(f"Failed to initialize OTLP Log Exporter: {e}\n")
+    otel_handler = None
+
+# Set up OTel OTLP Trace Exporter
+try:
+    tracer_provider = TracerProvider()
+    tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    trace.set_tracer_provider(tracer_provider)
+except Exception as e:
+    sys.stderr.write(f"Failed to initialize OTLP Trace Exporter: {e}\n")
+
+# Remove existing handlers and attach new ones
+for h in logger.handlers[:]:
+    logger.removeHandler(h)
+
+logger.addHandler(stream_handler)
+if otel_handler:
+    logger.addHandler(otel_handler)
+
+logger.setLevel(logging.INFO)
 
 # Get environment variables injected by Kubernetes Orchestrator
 USER_ID = os.getenv("USER_ID")
@@ -75,18 +121,23 @@ def main():
 
                             logger.info(f"Received from user: {user_text}")
 
-                            # Update State with Human Message
-                            state["messages"].append(HumanMessage(content=user_text))
+                            # Extract trace context from Redis message
+                            ctx = extract(data.get("trace_context", {}))
+                            tracer = trace.get_tracer("sandbox-agent")
 
-                            # Run LangGraph Agent
-                            logger.info("Invoking LangGraph with Gemini...")
-                            new_state = agent.invoke(state)
+                            with tracer.start_as_current_span("process_user_message", context=ctx):
+                                # Update State with Human Message
+                                state["messages"].append(HumanMessage(content=user_text))
 
-                            # The latest message is the AI's response
-                            ai_response = new_state["messages"][-1].content
+                                # Run LangGraph Agent
+                                logger.info("Invoking LangGraph with Gemini...")
+                                new_state = agent.invoke(state)
 
-                            # Update our local state pointer to the new state
-                            state = new_state
+                                # The latest message is the AI's response
+                                ai_response = new_state["messages"][-1].content
+
+                                # Update our local state pointer to the new state
+                                state = new_state
 
                             # Publish the agent's response back to the channel
                             response_payload = {"role": "bot", "content": ai_response}

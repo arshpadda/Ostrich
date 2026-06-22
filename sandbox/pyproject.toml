@@ -11,9 +11,11 @@ dependencies = [
     "langgraph==0.2.65",
     "litellm>=1.0.0",
     "opentelemetry-api>=1.26.0",
+    "opentelemetry-exporter-otlp>=1.26.0",
     "opentelemetry-exporter-prometheus>=0.47b0",
     "opentelemetry-sdk>=1.26.0",
     "prometheus-client>=0.20.0",
+    "python-json-logger>=2.0.7",
     "redis==5.2.1",
     "requests>=2.31.0",
 ]
