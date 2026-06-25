@@ -1,9 +1,10 @@
 from typing import Dict
 
 from fastapi import FastAPI
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from tortoise.contrib.fastapi import register_tortoise
 
-from .core.config import TORTOISE_ORM
+from .core.config import TORTOISE_ORM, settings
 from .core.logging_config import logging_middleware, setup_logging
 from .routers import chat, users
 
@@ -34,6 +35,14 @@ app = FastAPI(
 
 # Register logging middleware
 app.middleware("http")(logging_middleware)
+
+# Auto-instrument FastAPI for OpenTelemetry tracing
+FastAPIInstrumentor.instrument_app(app)
+
+from prometheus_fastapi_instrumentator import Instrumentator
+
+# Instrument FastAPI with Prometheus metrics
+Instrumentator().instrument(app).expose(app)
 
 # Add CORS middleware to allow requests from the frontend
 app.add_middleware(
@@ -70,6 +79,6 @@ app.include_router(ws.router)
 register_tortoise(
     app,
     config=TORTOISE_ORM,
-    generate_schemas=True,
+    generate_schemas=settings.GENERATE_SCHEMAS,
     add_exception_handlers=True,
 )

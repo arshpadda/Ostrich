@@ -41,9 +41,14 @@ spec:
                 secretKeyRef:
                   name: litellm-secrets
                   key: GEMINI_API_KEY
-            # Disable auth on the proxy itself since we are securing it via K8s networking
+            # Master key is sourced from the litellm-secrets Secret, not hardcoded.
+            # The cluster NetworkPolicy is the primary access control; this key is
+            # a defense-in-depth credential shared with sandbox clients.
             - name: LITELLM_MASTER_KEY
-              value: "sk-internal-proxy-key"
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-secrets
+                  key: LITELLM_MASTER_KEY
           volumeMounts:
             - name: config-volume
               mountPath: /app/config.yaml

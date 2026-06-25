@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6380"
     USE_LOCAL_SANDBOX: bool = True
     GEMINI_API_KEY: str = ""
+    # When True, Tortoise auto-creates/alters tables on startup. Keep False in
+    # production so Aerich migrations own the schema; enable only for tests.
+    GENERATE_SCHEMAS: bool = False
 
     model_config = {"env_file": "../.env", "extra": "ignore"}
 

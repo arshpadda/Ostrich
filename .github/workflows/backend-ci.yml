@@ -9,19 +9,19 @@ on:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
-    
+
     defaults:
       run:
         working-directory: backend
 
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: "3.12"
-        
+
     - name: Install uv
       uses: astral-sh/setup-uv@v3
       with:
@@ -30,9 +30,49 @@ jobs:
 
     - name: Install dependencies
       run: uv sync --all-extras --dev
-        
+
     - name: Run Ruff Linter
       run: uv run ruff check .
-      
+
     - name: Run Ruff Formatter Verification
       run: uv run ruff format --check .
+
+    - name: Run Tests
+      env:
+        # Use an in-memory SQLite DB so tests need no external services.
+        # GENERATE_SCHEMAS lets Tortoise create the tables on startup for tests.
+        DATABASE_URL: "sqlite://:memory:"
+        GENERATE_SCHEMAS: "true"
+        PROJECT_ID: "ci-test-project"
+        REDIS_URL: "redis://localhost:6379"
+      run: uv run pytest tests/ -v
+
+  sandbox-test:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: sandbox
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        enable-cache: true
+        cache-dependency-glob: "sandbox/uv.lock"
+
+    - name: Install dependencies
+      run: uv sync --all-extras
+
+    - name: Run Ruff Linter
+      run: uv run ruff check .
+
+    - name: Run Tests
+      run: uv run pytest tests/ -v

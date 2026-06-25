@@ -72,7 +72,10 @@ kubectl apply -f infrastructure/redis-k8s.yaml
 # 2. Deploy the Zero-Trust AI Gateway
 export $(grep -v '^#' .env | xargs)
 kubectl create namespace ai-gateway
-kubectl create secret generic litellm-secrets --from-literal=GEMINI_API_KEY=$GEMINI_API_KEY -n ai-gateway
+kubectl create secret generic litellm-secrets \
+  --from-literal=GEMINI_API_KEY=$GEMINI_API_KEY \
+  --from-literal=LITELLM_MASTER_KEY=$LITELLM_MASTER_KEY \
+  -n ai-gateway
 kubectl apply -f infrastructure/gcp/litellm-proxy.yaml
 kubectl apply -f infrastructure/gcp/sandbox-network-policy.yaml
 
