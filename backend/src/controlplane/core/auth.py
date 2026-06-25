@@ -28,12 +28,13 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         user_id_context.set(decoded_token.get("uid", ""))
         return decoded_token
     except Exception as e:
+        import logging
         import traceback
 
-        traceback.print_exc()
+        logging.getLogger(__name__).warning("Token verification failed: %s", traceback.format_exc())
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid authentication credentials: {str(e)}",
+            detail="Invalid or expired token.",
             headers={"WWW-Authenticate": "Bearer"},
         ) from e
 
@@ -45,5 +46,5 @@ def init_firebase():
         # Locally, it will use the credentials from `gcloud auth application-default login`.
         import os
 
-        project_id = os.getenv("PROJECT_ID", "ostr-499118")
+        project_id = os.environ["PROJECT_ID"]
         firebase_admin.initialize_app(options={"projectId": project_id})

@@ -1,3 +1,4 @@
+import json
 import os
 
 from src.tools import execute_bash, read_file, write_file
@@ -14,8 +15,9 @@ def test_write_and_read_file(tmp_path):
     assert os.path.exists(test_file)
 
     # Test reading
-    read_result = read_file.invoke({"filepath": str(test_file)})
-    assert read_result == content
+    read_result = json.loads(read_file.invoke({"filepath": str(test_file)}))
+    assert read_result["status"] == "success"
+    assert read_result["data"] == content
 
 
 def test_execute_bash():

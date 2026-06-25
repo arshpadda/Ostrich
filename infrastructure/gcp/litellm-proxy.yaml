@@ -31,7 +31,7 @@ spec:
     spec:
       containers:
         - name: litellm
-          image: ghcr.io/berriai/litellm:main-latest
+          image: ghcr.io/berriai/litellm:main-v1.40.14
           args: ["--config", "/app/config.yaml"]
           ports:
             - containerPort: 4000

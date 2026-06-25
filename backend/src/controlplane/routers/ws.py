@@ -1,13 +1,17 @@
 import asyncio
 import json
+import logging
 
 import redis.asyncio as redis
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from firebase_admin import auth
+from opentelemetry.propagate import inject
 
 from ..core.config import settings
 from ..database.models import ChatMessage, User
 from ..services.orchestrator import provision_sandbox_pod
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ws", tags=["WebSocket"])
 
@@ -81,32 +85,35 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
     # 3. Read from Redis and forward to WebSocket
     async def listen_to_redis():
         try:
-            print(f"Backend listening to Redis channel: {channel_name}")
-            # Performance Note (Bolt ⚡):
-            # Using async for pubsub.listen() instead of a while loop with get_message() and asyncio.sleep().
-            # This completely avoids unnecessary polling and CPU wakeups, drastically reducing overhead
-            # and minimizing latency for incoming pubsub messages.
-            async for message in pubsub.listen():
-                if message and message["type"] == "message":
-                    try:
-                        # Forward sandbox messages back to the frontend
-                        payload_str = message["data"]
-                        await websocket.send_text(payload_str)
-                        print("Backend successfully forwarded message to WebSocket")
+            logger.info("Backend listening to Redis channel: %s", channel_name)
+            while True:
+                try:
+                    async for message in pubsub.listen():
+                        if message and message["type"] == "message":
+                            try:
+                                # Forward sandbox messages back to the frontend
+                                payload_str = message["data"]
+                                await websocket.send_text(payload_str)
+                                logger.info("Backend successfully forwarded message to WebSocket")
 
-                        # Persist sandbox reply to PostgreSQL
-                        try:
-                            payload_json = json.loads(payload_str)
-                            if payload_json.get("role") == "bot":
-                                await ChatMessage.create(
-                                    user_id=user_obj.id, content=payload_json.get("content", ""), is_bot=True
-                                )
-                        except Exception as e:
-                            print(f"Error saving bot message to DB: {e}")
-                    except Exception as e:
-                        print(f"Error sending to WebSocket: {e}")
+                                # Persist sandbox reply to PostgreSQL
+                                try:
+                                    payload_json = json.loads(payload_str)
+                                    if payload_json.get("role") == "bot":
+                                        await ChatMessage.create(
+                                            user_id=user_obj.id, content=payload_json.get("content", ""), is_bot=True
+                                        )
+                                except Exception as e:
+                                    logger.error("Error saving bot message to DB: %s", e)
+                            except Exception as e:
+                                logger.error("Error sending to WebSocket: %s", e)
+                except Exception as e:
+                    logger.warning("listen_to_redis pubsub loop crashed: %s. Reconnecting...", e)
+                    await asyncio.sleep(1)
         except asyncio.CancelledError:
-            print("listen_to_redis task cancelled")
+            logger.info("listen_to_redis task cancelled")
+        except Exception as e:
+            logger.error("listen_to_redis outer crashed: %s", e)
 
     redis_task = asyncio.create_task(listen_to_redis())
 
@@ -126,8 +133,10 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
             # Save the message to DB
             msg_obj = await ChatMessage.create(user_id=user_obj.id, content=data, is_bot=False)
 
-            # Publish to Sandbox
-            payload = {"message_id": str(msg_obj.id), "role": "user", "content": data}
+            # Publish to Sandbox with OpenTelemetry trace context
+            trace_ctx = {}
+            inject(trace_ctx)
+            payload = {"message_id": str(msg_obj.id), "role": "user", "content": data, "trace_context": trace_ctx}
             await redis_client.publish(channel_name, json.dumps(payload))
 
     except WebSocketDisconnect:
