@@ -18,3 +18,7 @@
 ## 2026-06-20 - Unblocking the FastAPI Event Loop in Auth Dependency
 **Learning:** Calling synchronous blocking functions (like `auth.verify_id_token` for Firebase authentication) directly inside an `async def` function or dependency blocks the entire main event loop, causing latency and freezing other concurrent requests during authentication.
 **Action:** Always use `await asyncio.to_thread(func, args)` when calling blocking synchronous authentication or network code from an async dependency or endpoint.
+
+## 2026-06-26 - Composite Indexes for Filter and Sort Queries
+**Learning:** Queries that filter on one column (e.g. `user_id`) and sort on another (e.g. `created_at`) can suffer from performance issues if they don't have a composite index. While single-column indexes might exist, a composite index spanning both the filter and sort columns prevents expensive in-memory sorts and sequential scans on large datasets.
+**Action:** Always add a composite index (e.g. `indexes = (("user_id", "created_at"),)`) to models when there is a frequent access pattern involving filtering by one field and ordering by another, especially when bounding the query with limits and offsets.
