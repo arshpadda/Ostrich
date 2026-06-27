@@ -18,3 +18,7 @@
 ## 2026-06-20 - Unblocking the FastAPI Event Loop in Auth Dependency
 **Learning:** Calling synchronous blocking functions (like `auth.verify_id_token` for Firebase authentication) directly inside an `async def` function or dependency blocks the entire main event loop, causing latency and freezing other concurrent requests during authentication.
 **Action:** Always use `await asyncio.to_thread(func, args)` when calling blocking synchronous authentication or network code from an async dependency or endpoint.
+
+## 2026-06-27 - Cache Kubernetes API Calls in WebSockets
+**Learning:** Repeatedly calling Kubernetes APIs (like `v1.read_namespaced_pod`) inside high-frequency paths like a WebSocket message loop introduces significant latency. Even if offloaded via `asyncio.to_thread`, the external network call itself is slow.
+**Action:** Implement a short-lived in-memory cache to store the status of long-running external processes (like pods) to avoid hitting the API on every single message.
