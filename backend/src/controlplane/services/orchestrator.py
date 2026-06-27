@@ -1,6 +1,7 @@
 import logging
 import os
 import subprocess
+import time
 import uuid
 
 from kubernetes import client, config
@@ -22,6 +23,18 @@ except config.ConfigException:
 
 # Global dictionary to keep track of local subprocesses
 local_sandboxes = {}
+
+# Cache to avoid redundant Kubernetes API calls (Bolt ⚡)
+# Maps user_id (str) to the last time (float) the pod was confirmed running
+pod_status_cache = {}
+
+
+def clean_pod_status_cache():
+    """Periodically cleans up old entries from the pod_status_cache to prevent unbounded memory growth."""
+    current_time = time.time()
+    expired_keys = [k for k, v in pod_status_cache.items() if (current_time - v) >= 60]
+    for k in expired_keys:
+        del pod_status_cache[k]
 
 
 def provision_sandbox_pod(user_id: uuid.UUID):
@@ -53,6 +66,21 @@ def provision_sandbox_pod(user_id: uuid.UUID):
         local_sandboxes[str_id] = proc
         return True
 
+    str_id = str(user_id)
+    current_time = time.time()
+
+    # Clean the cache periodically (e.g. 1 in 100 chance) to avoid memory leaks
+    import random
+
+    if random.random() < 0.01:
+        clean_pod_status_cache()
+
+    # Performance Note (Bolt ⚡):
+    # Check our in-memory cache before making a synchronous Kubernetes API call.
+    # This prevents adding ~100ms of latency to every single WebSocket message.
+    if str_id in pod_status_cache and (current_time - pod_status_cache[str_id]) < 60:
+        return True
+
     v1 = client.CoreV1Api()
     namespace = "sandbox-chat"  # Can be customized via env vars
     pod_name = f"sandbox-{user_id}"
@@ -66,6 +94,7 @@ def provision_sandbox_pod(user_id: uuid.UUID):
                 v1.delete_namespaced_pod(name=pod_name, namespace=namespace, grace_period_seconds=0)
             else:
                 logger.info(f"Sandbox pod {pod_name} already exists and is in {existing_pod.status.phase} state.")
+                pod_status_cache[str_id] = current_time
                 return True
     except client.exceptions.ApiException as e:
         if e.status != 404:
@@ -114,6 +143,7 @@ def provision_sandbox_pod(user_id: uuid.UUID):
     try:
         v1.create_namespaced_pod(namespace=namespace, body=pod)
         logger.info(f"Successfully provisioned sandbox pod: {pod_name} in {namespace}.")
+        pod_status_cache[str_id] = current_time
         return True
     except client.exceptions.ApiException as e:
         logger.error(f"Failed to provision sandbox pod {pod_name}: {e}")
