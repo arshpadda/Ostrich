@@ -18,3 +18,7 @@
 ## 2026-06-20 - Unblocking the FastAPI Event Loop in Auth Dependency
 **Learning:** Calling synchronous blocking functions (like `auth.verify_id_token` for Firebase authentication) directly inside an `async def` function or dependency blocks the entire main event loop, causing latency and freezing other concurrent requests during authentication.
 **Action:** Always use `await asyncio.to_thread(func, args)` when calling blocking synchronous authentication or network code from an async dependency or endpoint.
+
+## 2026-06-21 - Database Query Optimization for Filtering and Sorting
+**Learning:** Queries that filter by one column and sort by another (e.g., `filter(user=user_obj).order_by("created_at")`) can suffer from inefficient index scans or table scans if they rely on single-column indexes, especially as the table grows.
+**Action:** Always add a composite index (e.g., `("user_id", "created_at")`) that covers both the filtering criteria and the sorting criteria to enable efficient queries for pagination and list retrieval.
