@@ -27,6 +27,10 @@ class ChatMessage(models.Model):
     class Meta:
         table = "chat_messages"
         ordering = ["created_at"]
+        # Performance Note (Bolt ⚡):
+        # Adding a composite index on user_id and created_at to optimize the
+        # list_messages query which filters by user and sorts by created_at.
+        indexes = (("user_id", "created_at"),)
 
     def __str__(self) -> str:
         return f"Message by {self.user_id} at {self.created_at}"
