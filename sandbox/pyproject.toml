@@ -6,8 +6,8 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "google-cloud-storage>=2.14.0",
-    "langchain-community>=0.0.10",
     "langchain-core==0.3.31",
+    "langchain-openai>=0.2.0",
     "langgraph==0.2.65",
     "litellm>=1.0.0",
     "opentelemetry-api>=1.26.0",
@@ -45,3 +45,4 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
+pythonpath = ["."]

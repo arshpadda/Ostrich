@@ -71,16 +71,17 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
     # provision_sandbox_pod is a synchronous blocking call (uses subprocess.Popen or kubernetes client).
     # Calling it directly in this async route blocks the entire FastAPI event loop, freezing other requests.
     # Offloading it to a threadpool via asyncio.to_thread fixes this bottleneck.
+    await websocket.send_text(json.dumps({"type": "system", "event": "sandbox_provisioning"}))
     await asyncio.to_thread(provision_sandbox_pod, user_obj.id)
 
-    # 2. Setup Redis Channel
+    # 3. Setup Redis Channel
     redis_client = redis.Redis(connection_pool=redis_pool)
     pubsub = redis_client.pubsub()
     channel_name = f"channel:sandbox:{user_obj.id}"
     await pubsub.subscribe(channel_name)
 
-    # Send a confirmation to the client
-    await websocket.send_text(json.dumps({"type": "system", "message": "Connected to Control Plane Sandbox Channel"}))
+    # Signal the client that the sandbox channel is ready.
+    await websocket.send_text(json.dumps({"type": "system", "event": "connected"}))
 
     # 3. Read from Redis and forward to WebSocket
     async def listen_to_redis():
@@ -96,10 +97,12 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                                 await websocket.send_text(payload_str)
                                 logger.info("Backend successfully forwarded message to WebSocket")
 
-                                # Persist sandbox reply to PostgreSQL
+                                # Persist only the final assembled reply. token/
+                                # tool_call frames are transport-only (see
+                                # system_design/08_frontend_streaming.md).
                                 try:
                                     payload_json = json.loads(payload_str)
-                                    if payload_json.get("role") == "bot":
+                                    if payload_json.get("type") == "message":
                                         await ChatMessage.create(
                                             user_id=user_obj.id, content=payload_json.get("content", ""), is_bot=True
                                         )
@@ -122,6 +125,17 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
         while True:
             data = await websocket.receive_text()
 
+            # Accept the structured {"type": "user_message", "content": ...} frame,
+            # falling back to raw text for backward compatibility.
+            try:
+                parsed = json.loads(data)
+                if isinstance(parsed, dict) and parsed.get("type") == "user_message":
+                    content = parsed["content"]
+                else:
+                    content = data
+            except (json.JSONDecodeError, TypeError):
+                content = data
+
             # Ensure the sandbox is actually running before sending the message!
             # If it was killed by TTL or manual deletion, this spins it back up.
             # Performance Note (Bolt ⚡):
@@ -131,12 +145,12 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
             await asyncio.to_thread(provision_sandbox_pod, user_obj.id)
 
             # Save the message to DB
-            msg_obj = await ChatMessage.create(user_id=user_obj.id, content=data, is_bot=False)
+            msg_obj = await ChatMessage.create(user_id=user_obj.id, content=content, is_bot=False)
 
             # Publish to Sandbox with OpenTelemetry trace context
             trace_ctx = {}
             inject(trace_ctx)
-            payload = {"message_id": str(msg_obj.id), "role": "user", "content": data, "trace_context": trace_ctx}
+            payload = {"message_id": str(msg_obj.id), "role": "user", "content": content, "trace_context": trace_ctx}
             await redis_client.publish(channel_name, json.dumps(payload))
 
     except WebSocketDisconnect:
