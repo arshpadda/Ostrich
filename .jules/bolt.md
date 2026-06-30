@@ -22,3 +22,7 @@
 ## 2026-06-26 - Composite Indexes for Filter and Sort Queries
 **Learning:** Queries that filter on one column (e.g. `user_id`) and sort on another (e.g. `created_at`) can suffer from performance issues if they don't have a composite index. While single-column indexes might exist, a composite index spanning both the filter and sort columns prevents expensive in-memory sorts and sequential scans on large datasets.
 **Action:** Always add a composite index (e.g. `indexes = (("user_id", "created_at"),)`) to models when there is a frequent access pattern involving filtering by one field and ordering by another, especially when bounding the query with limits and offsets.
+
+## 2026-06-30 - Prevent O(N) Re-renders During WebSocket Streaming
+**Learning:** In a chat interface where messages are stored in an array (e.g., `messages`) and rendered iteratively, streaming tokens via WebSocket causes the array reference or individual objects to update rapidly. Without memoization, every token update forces *all* previously rendered message components to re-render, resulting in O(N) rendering performance cost during streaming.
+**Action:** Always wrap components rendered in long lists (like `MessageBubble`) with `React.memo()`. This ensures that only the currently streaming message (whose props change) re-renders, while older messages bypass the render cycle.
