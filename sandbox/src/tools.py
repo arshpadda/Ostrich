@@ -11,6 +11,28 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger("sandbox-agent")
 
+# Tool guardrails: confine file operations to the workspace and bound output sizes
+# so a single tool call can't read/overwrite arbitrary container paths (secrets,
+# the worker's own code), exhaust memory, or flood the Redis channel.
+MAX_BASH_OUTPUT = 16_384  # chars of combined stdout/stderr returned to the model
+MAX_READ_BYTES = 256 * 1024  # bytes returned by read_file
+MAX_WORKSPACE_ZIP_BYTES = 100 * 1024 * 1024  # save_workspace archive ceiling
+
+
+def _workspace_root() -> str:
+    # Overridable via WORKSPACE_DIR (defaults to the mounted PVC at /workspace).
+    return os.path.realpath(os.getenv("WORKSPACE_DIR", "/workspace"))
+
+
+def _resolve_in_workspace(filepath: str) -> str:
+    """Resolve filepath under the workspace root, rejecting any escape (.., abs)."""
+    root = _workspace_root()
+    base = filepath if os.path.isabs(filepath) else os.path.join(root, filepath)
+    resolved = os.path.realpath(base)
+    if resolved != root and not resolved.startswith(root + os.sep):
+        raise ValueError(f"Path is outside the workspace: {filepath}")
+    return resolved
+
 
 class GetWeatherInput(BaseModel):
     location: str = Field(description="The city and state, e.g., San Francisco, CA")
@@ -44,6 +66,8 @@ def execute_bash(command: str) -> str:
         logger.info(f"Executing bash: {command}")
         result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=60)
         output = result.stdout + result.stderr
+        if len(output) > MAX_BASH_OUTPUT:
+            output = output[:MAX_BASH_OUTPUT] + "\n...[output truncated]"
         output_str = output.strip() if output else "Command executed successfully (no output)."
         return json.dumps({"status": "success", "data": output_str, "error_message": None})
     except subprocess.TimeoutExpired:
@@ -58,11 +82,16 @@ class ReadFileInput(BaseModel):
 
 @tool(args_schema=ReadFileInput)
 def read_file(filepath: str) -> str:
-    """Reads the contents of a file."""
+    """Reads the contents of a file within the workspace."""
     try:
-        with open(filepath, "r") as f:
-            content = f.read()
+        path = _resolve_in_workspace(filepath)
+        with open(path, "r") as f:
+            content = f.read(MAX_READ_BYTES + 1)
+        if len(content) > MAX_READ_BYTES:
+            content = content[:MAX_READ_BYTES] + "\n...[truncated]"
         return json.dumps({"status": "success", "data": content, "error_message": None})
+    except ValueError as e:
+        return json.dumps({"status": "error", "data": None, "error_message": str(e)})
     except FileNotFoundError:
         return json.dumps({"status": "error", "data": None, "error_message": f"File not found: {filepath}"})
     except PermissionError:
@@ -80,12 +109,15 @@ class WriteFileInput(BaseModel):
 
 @tool(args_schema=WriteFileInput)
 def write_file(filepath: str, content: str) -> str:
-    """Writes content to a file. Overwrites the file if it exists."""
+    """Writes content to a file within the workspace. Overwrites if it exists."""
     try:
-        os.makedirs(os.path.dirname(os.path.abspath(filepath)) or ".", exist_ok=True)
-        with open(filepath, "w") as f:
+        path = _resolve_in_workspace(filepath)
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w") as f:
             f.write(content)
         return json.dumps({"status": "success", "data": f"Successfully wrote to {filepath}", "error_message": None})
+    except ValueError as e:
+        return json.dumps({"status": "error", "data": None, "error_message": str(e)})
     except PermissionError:
         return json.dumps(
             {"status": "error", "data": None, "error_message": f"Permission denied writing to file: {filepath}"}
@@ -109,6 +141,11 @@ def save_workspace() -> str:
         zip_path = "/tmp/workspace"
         shutil.make_archive(zip_path, "zip", "/workspace")
         zip_file = f"{zip_path}.zip"
+
+        if os.path.getsize(zip_file) > MAX_WORKSPACE_ZIP_BYTES:
+            os.remove(zip_file)
+            logger.warning("Workspace archive exceeds %d bytes; refusing to save.", MAX_WORKSPACE_ZIP_BYTES)
+            return json.dumps({"status": "error", "data": None, "error_message": "Workspace is too large to save."})
 
         logger.info(f"Uploading {zip_file} to gs://{bucket_name}/{user_id}/workspace.zip ...")
 

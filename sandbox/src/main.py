@@ -4,6 +4,7 @@ import logging
 import os
 import socket
 import sys
+import time
 import uuid
 
 import litellm
@@ -31,13 +32,26 @@ metric_reader = PrometheusMetricReader()
 meter_provider = MeterProvider(metric_readers=[metric_reader])
 metrics.set_meter_provider(meter_provider)
 
-# Create a custom Meter and Counter for Sandbox metrics
+# Create a custom Meter and instruments for Sandbox metrics
 meter = metrics.get_meter("sandbox-agent")
 message_counter = meter.create_counter(
     "sandbox.messages.received",
     description="Total number of messages received from the user",
     unit="1",
 )
+tool_call_counter = meter.create_counter(
+    "sandbox.tool_calls", description="Total tool invocations by the agent", unit="1"
+)
+turn_error_counter = meter.create_counter(
+    "sandbox.turn.errors", description="Total turns that ended in an error", unit="1"
+)
+turn_latency = meter.create_histogram(
+    "sandbox.turn.latency", description="Wall-clock seconds to complete an agent turn", unit="s"
+)
+
+# Keep at most this many trailing messages in context (trimmed at a turn boundary
+# to avoid orphaning tool-call/tool-result pairs) to bound cost and context size.
+MAX_HISTORY_MESSAGES = 40
 
 # Enable LiteLLM OpenTelemetry Integration for token/cost metrics
 litellm.success_callback = ["opentelemetry"]
@@ -103,21 +117,45 @@ def _friendly_error(exc: Exception) -> str:
     return "I'm sorry, I've encountered an unexpected error."
 
 
+def _trim_history(messages: list) -> list:
+    """Cap history at MAX_HISTORY_MESSAGES, slicing at a HumanMessage boundary so
+    we never start mid-sequence (which would orphan tool-call/tool-result pairs)."""
+    if len(messages) <= MAX_HISTORY_MESSAGES:
+        return messages
+    tail = messages[-MAX_HISTORY_MESSAGES:]
+    for i, msg in enumerate(tail):
+        if isinstance(msg, HumanMessage):
+            return tail[i:]
+    return tail  # no human boundary found; return the window as-is
+
+
 async def process_turn(agent, redis_client: redis.Redis, state: dict, user_text: str) -> dict:
     """Stream one agent turn, publishing token/tool_call/message frames.
 
     Returns the updated conversation state for the next turn.
     """
     message_id = str(uuid.uuid4())
+    state["messages"] = _trim_history(state["messages"])
     state["messages"].append(HumanMessage(content=user_text))
 
+    started = time.monotonic()
     final_state = None
-    async for event in agent.astream_events(state, version="v2"):
-        for frame in event_to_frames(event, message_id):
-            await redis_client.publish(CHANNEL_NAME, json.dumps(frame))
-        candidate = final_state_from_event(event)
-        if candidate is not None:
-            final_state = candidate
+    try:
+        async for event in agent.astream_events(state, version="v2"):
+            for frame in event_to_frames(event, message_id):
+                if frame["type"] == "tool_call" and frame.get("status") == "running":
+                    tool_call_counter.add(1, {"tool": frame.get("tool", "unknown")})
+                await redis_client.publish(CHANNEL_NAME, json.dumps(frame))
+            candidate = final_state_from_event(event)
+            if candidate is not None:
+                final_state = candidate
+    except Exception:
+        # Keep state consistent: drop the unanswered human message so the next
+        # turn doesn't see a dangling prompt with no reply. The caller emits the
+        # user-facing error frame.
+        if state["messages"] and isinstance(state["messages"][-1], HumanMessage):
+            state["messages"].pop()
+        raise
 
     # Authoritative final content comes from the graph's final state, not the
     # accumulated deltas (which can include intermediate tool-calling turns).
@@ -131,7 +169,8 @@ async def process_turn(agent, redis_client: redis.Redis, state: dict, user_text:
         CHANNEL_NAME,
         json.dumps({"type": "message", "message_id": message_id, "role": "bot", "content": content, "done": True}),
     )
-    logger.info("Completed turn %s", message_id)
+    turn_latency.record(time.monotonic() - started, {"sandbox_id": SANDBOX_ID})
+    logger.info("Completed turn %s in %.2fs", message_id, time.monotonic() - started)
     return state
 
 
@@ -189,6 +228,7 @@ async def main():
                         state = await process_turn(agent, r, state, user_text)
                 except Exception as e:
                     logger.error("Error processing message", exc_info=True)
+                    turn_error_counter.add(1, {"sandbox_id": SANDBOX_ID})
                     await r.publish(CHANNEL_NAME, json.dumps({"type": "error", "message": _friendly_error(e)}))
                     logger.info("Sent error notification back to Redis.")
         except redis.RedisError:
