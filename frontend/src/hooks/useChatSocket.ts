@@ -26,6 +26,7 @@ export function useChatSocket(enabled: boolean): UseChatSocket {
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closedByUs = useRef(false);
   const attemptRef = useRef(0); // reconnect attempt count, for capped backoff
+  const connectingRef = useRef(false); // a connect() is mid-flight (token fetch)
 
   // --- streaming assembly --------------------------------------------------
   const upsertBot = useCallback((id: string, update: (m: ChatMessage) => ChatMessage) => {
@@ -86,19 +87,37 @@ export function useChatSocket(enabled: boolean): UseChatSocket {
 
   // --- connection lifecycle ------------------------------------------------
   const connect = useCallback(async () => {
-    // Dedup: never open a second socket while one is connecting/open (guards
-    // against React StrictMode double-invoke and overlapping reconnects).
+    // Serialize connects across the async token fetch and never open a second
+    // socket while one is connecting/open. Without this, React StrictMode's
+    // mount→cleanup→remount (and overlapping reconnects) open duplicate sockets
+    // during the await window — each claiming its own sandbox session.
+    if (connectingRef.current) return;
     const existing = wsRef.current;
     if (existing && (existing.readyState === WebSocket.CONNECTING || existing.readyState === WebSocket.OPEN)) {
       return;
     }
 
-    const token = await auth.currentUser?.getIdToken();
-    if (!token) return;
+    connectingRef.current = true;
+    let token: string | undefined;
+    try {
+      token = await auth.currentUser?.getIdToken();
+    } finally {
+      connectingRef.current = false;
+    }
+    // Aborted (unmounted) during the token fetch, or no token / another socket won.
+    if (!token || closedByUs.current) return;
+    const racer = wsRef.current;
+    if (racer && (racer.readyState === WebSocket.CONNECTING || racer.readyState === WebSocket.OPEN)) return;
 
     setStatus((s) => (s === "idle" ? "provisioning" : "reconnecting"));
     const ws = new WebSocket(`${WS_URL}/ws/chat?token=${encodeURIComponent(token)}`);
     wsRef.current = ws;
+    // Unmounted between creating the socket and now → close it immediately.
+    if (closedByUs.current) {
+      ws.close();
+      wsRef.current = null;
+      return;
+    }
 
     ws.onopen = () => {
       attemptRef.current = 0; // reset backoff once connected

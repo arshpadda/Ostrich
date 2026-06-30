@@ -84,6 +84,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
         await websocket.close(code=1011)
         return
 
+    # Safety net: reconcile any orphaned "active" sessions for this user (e.g. an
+    # unclean disconnect where the release never ran). A user has one logical
+    # sandbox at a time, so prior actives are stale.
+    await SandboxSession.filter(user_id=user_obj.id, status="active").update(
+        status="released", released_at=datetime.now(timezone.utc)
+    )
+
     # Durable record of which sandbox served this session (see SandboxSession).
     session = await SandboxSession.create(
         user_id=user_obj.id, claim_name=claim_name, sandbox_name=sandbox_name, status="active"
