@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 
 import redis.asyncio as redis
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
@@ -8,7 +9,7 @@ from firebase_admin import auth
 from opentelemetry.propagate import inject
 
 from ..core.config import settings
-from ..database.models import ChatMessage, User
+from ..database.models import ChatMessage, SandboxSession, User
 from ..services.orchestrator import claim_sandbox, release_sandbox
 
 logger = logging.getLogger(__name__)
@@ -70,13 +71,23 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
     # resolves to a sandbox whose stable name is the Redis channel key.
     # claim_sandbox is a blocking kubernetes call, so offload it to a thread.
     await websocket.send_text(json.dumps({"type": "system", "event": "sandbox_provisioning"}))
+    claim_name = f"claim-{user_obj.id}"
     sandbox_name = await asyncio.to_thread(claim_sandbox, user_obj.id)
     if not sandbox_name:
+        # Record the failed claim for audit/debugging, then bail.
+        await SandboxSession.create(
+            user_id=user_obj.id, claim_name=claim_name, status="failed", error="claim did not resolve"
+        )
         await websocket.send_text(
             json.dumps({"type": "error", "message": "Could not provision a sandbox. Please retry."})
         )
         await websocket.close(code=1011)
         return
+
+    # Durable record of which sandbox served this session (see SandboxSession).
+    session = await SandboxSession.create(
+        user_id=user_obj.id, claim_name=claim_name, sandbox_name=sandbox_name, status="active"
+    )
 
     # 3. Setup Redis Channel (keyed by the claimed sandbox's stable name)
     redis_client = redis.Redis(connection_pool=redis_pool)
@@ -111,7 +122,10 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                     payload_json = json.loads(payload_str)
                     if payload_json.get("type") == "message":
                         await ChatMessage.create(
-                            user_id=user_obj.id, content=payload_json.get("content", ""), is_bot=True
+                            user_id=user_obj.id,
+                            content=payload_json.get("content", ""),
+                            is_bot=True,
+                            sandbox_session=session,
                         )
                 except Exception as e:
                     logger.error("Error forwarding/persisting frame: %s", e)
@@ -143,7 +157,9 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                 content = data
 
             # Save the message to DB
-            msg_obj = await ChatMessage.create(user_id=user_obj.id, content=content, is_bot=False)
+            msg_obj = await ChatMessage.create(
+                user_id=user_obj.id, content=content, is_bot=False, sandbox_session=session
+            )
 
             # Publish to Sandbox with OpenTelemetry trace context
             trace_ctx = {}
@@ -157,6 +173,10 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
         redis_task.cancel()
         await pubsub.unsubscribe(channel_name)
         await pubsub.close()
+        # Mark the session released for the audit trail.
+        session.status = "released"
+        session.released_at = datetime.now(timezone.utc)
+        await session.save()
         # Release the sandbox (deletes the claim -> tears down the pod), once per
         # session. Fixes the prior "pod lingers until TTL" leak.
         await asyncio.to_thread(release_sandbox, user_obj.id)
