@@ -35,7 +35,7 @@ and tool calls with the final message.
 
 | `type`        | Fields                                              | Meaning |
 |---------------|-----------------------------------------------------|---------|
-| `system`      | `event` (`sandbox_provisioning` \| `connected` \| `sandbox_expired`) | Lifecycle signal |
+| `system`      | `event` (`sandbox_provisioning` \| `connected` \| `sandbox_expired` \| `cancelled`) | Lifecycle signal; `cancelled` carries the interrupted `message_id` |
 | `token`       | `message_id`, `delta`                               | Incremental chunk of the bot reply |
 | `tool_call`   | `message_id`, `tool`, `args`, `status` (`running` \| `done`), `result_preview` | Agent tool activity |
 | `message`     | `message_id`, `role` (`bot`), `content`, `done: true` | Final assembled reply (this frame is persisted) |
@@ -46,6 +46,7 @@ and tool calls with the final message.
 | `type`         | Fields    | Meaning |
 |----------------|-----------|---------|
 | `user_message` | `content` | A user prompt |
+| `cancel`       | —         | Stop the in-flight turn (Stop button). A new `user_message` also implicitly cancels the running turn. Cancellation lands at the next await boundary, so a blocking tool finishes first (v1). |
 
 ### Persistence rule
 

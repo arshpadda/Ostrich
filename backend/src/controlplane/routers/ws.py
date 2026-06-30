@@ -125,15 +125,21 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
         while True:
             data = await websocket.receive_text()
 
-            # Accept the structured {"type": "user_message", "content": ...} frame,
-            # falling back to raw text for backward compatibility.
             try:
                 parsed = json.loads(data)
-                if isinstance(parsed, dict) and parsed.get("type") == "user_message":
-                    content = parsed["content"]
-                else:
-                    content = data
             except (json.JSONDecodeError, TypeError):
+                parsed = None
+
+            # Stop button: relay a cancel to the sandbox worker (no persistence).
+            if isinstance(parsed, dict) and parsed.get("type") == "cancel":
+                await redis_client.publish(channel_name, json.dumps({"type": "cancel"}))
+                continue
+
+            # Accept the structured {"type": "user_message", "content": ...} frame,
+            # falling back to raw text for backward compatibility.
+            if isinstance(parsed, dict) and parsed.get("type") == "user_message":
+                content = parsed["content"]
+            else:
                 content = data
 
             # Save the message to DB

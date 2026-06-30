@@ -10,7 +10,8 @@ import { StatusBar } from "./StatusBar";
 
 export function ChatView() {
   const { user, logout } = useAuth();
-  const { status, messages, error, send, setHistory } = useChatSocket(true);
+  const { status, messages, error, send, cancel, setHistory } = useChatSocket(true);
+  const streaming = messages.some((m) => m.role === "bot" && m.streaming);
 
   const { data: history } = useQuery({
     queryKey: ["history", user?.uid],
@@ -62,7 +63,7 @@ export function ChatView() {
         <MessageList messages={messages} />
       </main>
 
-      <Composer onSend={send} disabled={status === "error"} />
+      <Composer onSend={send} onStop={cancel} streaming={streaming} disabled={status === "error"} />
     </div>
   );
 }

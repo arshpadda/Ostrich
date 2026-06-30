@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -129,12 +130,13 @@ def _trim_history(messages: list) -> list:
     return tail  # no human boundary found; return the window as-is
 
 
-async def process_turn(agent, redis_client: redis.Redis, state: dict, user_text: str) -> dict:
+async def process_turn(agent, redis_client: redis.Redis, state: dict, user_text: str, message_id: str) -> dict:
     """Stream one agent turn, publishing token/tool_call/message frames.
 
-    Returns the updated conversation state for the next turn.
+    Returns the updated conversation state for the next turn. Raises on error or
+    cancellation; in both cases the unanswered prompt is rolled back so the next
+    turn sees consistent history.
     """
-    message_id = str(uuid.uuid4())
     state["messages"] = _trim_history(state["messages"])
     state["messages"].append(HumanMessage(content=user_text))
 
@@ -149,10 +151,11 @@ async def process_turn(agent, redis_client: redis.Redis, state: dict, user_text:
             candidate = final_state_from_event(event)
             if candidate is not None:
                 final_state = candidate
-    except Exception:
-        # Keep state consistent: drop the unanswered human message so the next
-        # turn doesn't see a dangling prompt with no reply. The caller emits the
-        # user-facing error frame.
+    except (Exception, asyncio.CancelledError):
+        # Drop the unanswered human message so the next turn doesn't see a
+        # dangling prompt. Covers both errors (caller emits an error frame) and
+        # cancellation (caller emits a cancelled frame). CancelledError is a
+        # BaseException, so it must be named explicitly here.
         if state["messages"] and isinstance(state["messages"][-1], HumanMessage):
             state["messages"].pop()
         raise
@@ -198,8 +201,48 @@ async def main():
 
     logger.info(f"Subscribed to {CHANNEL_NAME}. Listening for user messages...")
 
-    # The LangGraph state holds the conversation history
+    # The LangGraph state holds the conversation history. A single turn runs at a
+    # time as a cancellable background task so the reader stays responsive and a
+    # new prompt (or an explicit cancel) can interrupt the in-flight turn.
     state = {"messages": []}
+    current_task: asyncio.Task | None = None
+    current_message_id: str | None = None
+
+    async def _run_turn(data: dict, message_id: str) -> None:
+        nonlocal state
+        user_text = data.get("content", "")
+        message_counter.add(1, {"sandbox_id": SANDBOX_ID})
+        logger.info("Received from user: %s", user_text)
+        ctx = extract(data.get("trace_context", {}))
+        tracer = trace.get_tracer("sandbox-agent")
+        try:
+            with tracer.start_as_current_span("process_user_message", context=ctx):
+                logger.info("Streaming LangGraph turn %s...", message_id)
+                state = await process_turn(agent, r, state, user_text, message_id)
+        except asyncio.CancelledError:
+            logger.info("Turn %s cancelled", message_id)
+            raise
+        except Exception as e:
+            logger.error("Error processing message", exc_info=True)
+            turn_error_counter.add(1, {"sandbox_id": SANDBOX_ID})
+            await r.publish(CHANNEL_NAME, json.dumps({"type": "error", "message": _friendly_error(e)}))
+
+    async def _cancel_current() -> None:
+        nonlocal current_task, current_message_id
+        if current_task and not current_task.done():
+            current_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await current_task
+            if current_message_id:
+                # Notify the client the in-flight turn was interrupted. Note: a
+                # blocking tool (e.g. subprocess.run) only yields at the next await
+                # boundary, so cancelling mid-tool waits for it to return (v1).
+                await r.publish(
+                    CHANNEL_NAME,
+                    json.dumps({"type": "system", "event": "cancelled", "message_id": current_message_id}),
+                )
+        current_task = None
+        current_message_id = None
 
     while True:
         try:
@@ -212,25 +255,19 @@ async def main():
                     logger.warning("Skipping non-JSON message on channel")
                     continue
 
-                # Only respond to inbound user prompts; ignore frames we publish.
+                # Explicit stop from the client.
+                if data.get("type") == "cancel":
+                    await _cancel_current()
+                    continue
+
+                # Ignore frames we publish ourselves; only act on user prompts.
                 if data.get("role") != "user" and data.get("type") != "user_message":
                     continue
 
-                user_text = data.get("content", "")
-                message_counter.add(1, {"sandbox_id": SANDBOX_ID})
-                logger.info(f"Received from user: {user_text}")
-
-                ctx = extract(data.get("trace_context", {}))
-                tracer = trace.get_tracer("sandbox-agent")
-                try:
-                    with tracer.start_as_current_span("process_user_message", context=ctx):
-                        logger.info("Streaming LangGraph turn...")
-                        state = await process_turn(agent, r, state, user_text)
-                except Exception as e:
-                    logger.error("Error processing message", exc_info=True)
-                    turn_error_counter.add(1, {"sandbox_id": SANDBOX_ID})
-                    await r.publish(CHANNEL_NAME, json.dumps({"type": "error", "message": _friendly_error(e)}))
-                    logger.info("Sent error notification back to Redis.")
+                # A new prompt supersedes any in-flight turn.
+                await _cancel_current()
+                current_message_id = str(uuid.uuid4())
+                current_task = asyncio.create_task(_run_turn(data, current_message_id))
         except redis.RedisError:
             logger.warning("Redis connection issue, retrying...", exc_info=True)
             await asyncio.sleep(1)

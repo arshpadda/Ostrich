@@ -1,6 +1,16 @@
 import { useState, type KeyboardEvent } from "react";
 
-export function Composer({ onSend, disabled }: { onSend: (text: string) => void; disabled: boolean }) {
+export function Composer({
+  onSend,
+  onStop,
+  streaming,
+  disabled,
+}: {
+  onSend: (text: string) => void;
+  onStop: () => void;
+  streaming: boolean;
+  disabled: boolean;
+}) {
   const [text, setText] = useState("");
 
   const submit = () => {
@@ -27,13 +37,22 @@ export function Composer({ onSend, disabled }: { onSend: (text: string) => void;
           placeholder="Ask the agent to build something…"
           className="max-h-40 flex-1 resize-none rounded-xl border border-[var(--color-border-soft)] bg-[var(--color-panel-2)] px-4 py-3 text-[15px] text-zinc-100 placeholder:text-zinc-500 focus:border-[var(--color-accent)] focus:outline-none"
         />
-        <button
-          onClick={submit}
-          disabled={disabled || !text.trim()}
-          className="rounded-xl bg-[var(--color-accent)] px-4 py-3 font-medium text-white transition hover:opacity-90 disabled:opacity-40"
-        >
-          Send
-        </button>
+        {streaming ? (
+          <button
+            onClick={onStop}
+            className="rounded-xl border border-[var(--color-border-soft)] bg-[var(--color-panel-2)] px-4 py-3 font-medium text-zinc-200 transition hover:bg-white/5"
+          >
+            Stop
+          </button>
+        ) : (
+          <button
+            onClick={submit}
+            disabled={disabled || !text.trim()}
+            className="rounded-xl bg-[var(--color-accent)] px-4 py-3 font-medium text-white transition hover:opacity-90 disabled:opacity-40"
+          >
+            Send
+          </button>
+        )}
       </div>
     </div>
   );

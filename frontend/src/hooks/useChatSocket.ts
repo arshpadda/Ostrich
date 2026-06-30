@@ -8,6 +8,7 @@ interface UseChatSocket {
   messages: ChatMessage[];
   error: string | null;
   send: (content: string) => void;
+  cancel: () => void;
   setHistory: (messages: ChatMessage[]) => void;
 }
 
@@ -50,6 +51,10 @@ export function useChatSocket(enabled: boolean): UseChatSocket {
             setError(null); // clear any transient error (e.g. first-sign-in profile race)
           }
           else if (frame.event === "sandbox_expired") setStatus("reconnecting");
+          else if (frame.event === "cancelled" && frame.message_id) {
+            // Stop the streaming cursor on the interrupted message.
+            upsertBot(frame.message_id, (m) => ({ ...m, streaming: false }));
+          }
           break;
         case "token":
           upsertBot(frame.message_id, (m) => ({ ...m, content: m.content + frame.delta, streaming: true }));
@@ -137,7 +142,11 @@ export function useChatSocket(enabled: boolean): UseChatSocket {
     wsRef.current?.send(JSON.stringify({ type: "user_message", content: text }));
   }, []);
 
+  const cancel = useCallback(() => {
+    wsRef.current?.send(JSON.stringify({ type: "cancel" }));
+  }, []);
+
   const setHistory = useCallback((msgs: ChatMessage[]) => setMessages(msgs), []);
 
-  return { status, messages, error, send, setHistory };
+  return { status, messages, error, send, cancel, setHistory };
 }

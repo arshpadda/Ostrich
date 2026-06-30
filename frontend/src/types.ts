@@ -1,7 +1,11 @@
 // Wire protocol — mirrors system_design/08_frontend_streaming.md.
 
 export type ServerFrame =
-  | { type: "system"; event: "sandbox_provisioning" | "connected" | "sandbox_expired" }
+  | {
+      type: "system";
+      event: "sandbox_provisioning" | "connected" | "sandbox_expired" | "cancelled";
+      message_id?: string;
+    }
   | { type: "token"; message_id: string; delta: string }
   | {
       type: "tool_call";
