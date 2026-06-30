@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, memo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage } from "../types";
@@ -8,7 +8,10 @@ import { ToolCallCard } from "./ToolCallCard";
 // block actually renders.
 const CodeBlock = lazy(() => import("./CodeBlock"));
 
-export function MessageBubble({ message }: { message: ChatMessage }) {
+// Performance Note (Bolt ⚡):
+// Wrapping MessageBubble in React.memo prevents O(N) re-renders of older messages
+// in the chat history when new tokens are streamed via WebSocket.
+export const MessageBubble = memo(function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user";
 
   return (
@@ -57,4 +60,4 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
       </div>
     </div>
   );
-}
+});
