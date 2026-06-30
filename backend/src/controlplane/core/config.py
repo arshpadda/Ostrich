@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # "ostrich"). Empty = in-cluster config, else the current kubeconfig context.
     SANDBOX_KUBE_CONTEXT: str = ""
     SANDBOX_CLAIM_TIMEOUT_SECONDS: int = 30
+    # Per-request (connect, read) timeout for individual Kubernetes API calls, so a
+    # slow/hung API server can't pin a threadpool worker indefinitely.
+    SANDBOX_KUBE_REQUEST_TIMEOUT_SECONDS: int = 10
 
     model_config = {"env_file": "../.env", "extra": "ignore"}
 

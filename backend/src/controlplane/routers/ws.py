@@ -8,29 +8,12 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from firebase_admin import auth
 from opentelemetry.propagate import inject
 
-from ..core.config import settings
 from ..database.models import ChatMessage, SandboxSession, User
 from ..services.orchestrator import claim_sandbox, release_sandbox
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ws", tags=["WebSocket"])
-
-# Shared Redis pool across the router
-redis_pool = None
-
-
-@router.on_event("startup")
-async def startup_event():
-    global redis_pool
-    redis_pool = redis.ConnectionPool.from_url(settings.REDIS_URL, decode_responses=True, health_check_interval=30)
-
-
-@router.on_event("shutdown")
-async def shutdown_event():
-    global redis_pool
-    if redis_pool:
-        await redis_pool.disconnect()
 
 
 async def verify_ws_token(token: str = Query(...)):
@@ -42,10 +25,8 @@ async def verify_ws_token(token: str = Query(...)):
         # freezing other requests. Offloading it to a threadpool via asyncio.to_thread fixes this.
         decoded_token = await asyncio.to_thread(auth.verify_id_token, token)
         return decoded_token
-    except Exception:
-        import traceback
-
-        traceback.print_exc()
+    except Exception as e:
+        logger.warning("WebSocket token verification failed: %s", e)
         return None
 
 
@@ -97,7 +78,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
     )
 
     # 3. Setup Redis Channel (keyed by the claimed sandbox's stable name)
-    redis_client = redis.Redis(connection_pool=redis_pool)
+    redis_client = redis.Redis(connection_pool=websocket.app.state.redis_pool)
     pubsub = redis_client.pubsub()
     channel_name = f"channel:sandbox:{sandbox_name}"
     await pubsub.subscribe(channel_name)

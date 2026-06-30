@@ -63,28 +63,33 @@ def claim_sandbox(user_id: uuid.UUID) -> str | None:
             "lifecycle": {"shutdownPolicy": "Delete"},
         },
     }
+    timeout = settings.SANDBOX_KUBE_REQUEST_TIMEOUT_SECONDS
     try:
-        api.create_namespaced_custom_object(GROUP, VERSION, ns, CLAIM_PLURAL, body)
+        api.create_namespaced_custom_object(GROUP, VERSION, ns, CLAIM_PLURAL, body, _request_timeout=timeout)
         logger.info("Created SandboxClaim %s", name)
     except client.exceptions.ApiException as e:
         if e.status != 409:  # 409 = already claimed; reuse it
             logger.error("Failed to create SandboxClaim %s: %s", name, e)
             return None
+    except Exception as e:  # connection/timeout errors are not ApiException
+        logger.error("Error creating SandboxClaim %s: %s", name, e)
+        return None
 
+    # Poll until the claim resolves. Transient read errors are tolerated (logged
+    # and retried) until the overall deadline, rather than aborting the claim.
     deadline = time.monotonic() + settings.SANDBOX_CLAIM_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         try:
-            obj = api.get_namespaced_custom_object(GROUP, VERSION, ns, CLAIM_PLURAL, name)
-        except client.exceptions.ApiException as e:
-            logger.error("Failed to read SandboxClaim %s: %s", name, e)
-            return None
-        sandbox_name = (obj.get("status") or {}).get("sandbox", {}).get("name")
-        if sandbox_name:
-            logger.info("Claim %s resolved to sandbox %s", name, sandbox_name)
-            return sandbox_name
+            obj = api.get_namespaced_custom_object(GROUP, VERSION, ns, CLAIM_PLURAL, name, _request_timeout=timeout)
+            sandbox_name = (obj.get("status") or {}).get("sandbox", {}).get("name")
+            if sandbox_name:
+                logger.info("Claim %s resolved to sandbox %s", name, sandbox_name)
+                return sandbox_name
+        except Exception as e:
+            logger.warning("Transient error reading SandboxClaim %s: %s; retrying", name, e)
         time.sleep(0.5)
 
-    logger.error("SandboxClaim %s did not resolve within timeout", name)
+    logger.error("SandboxClaim %s did not resolve within %ss", name, settings.SANDBOX_CLAIM_TIMEOUT_SECONDS)
     return None
 
 
@@ -92,9 +97,14 @@ def release_sandbox(user_id: uuid.UUID) -> None:
     """Delete the user's SandboxClaim, which tears down the sandbox (shutdownPolicy: Delete)."""
     api = client.CustomObjectsApi()
     name = _claim_name(user_id)
+    timeout = settings.SANDBOX_KUBE_REQUEST_TIMEOUT_SECONDS
     try:
-        api.delete_namespaced_custom_object(GROUP, VERSION, settings.SANDBOX_NAMESPACE, CLAIM_PLURAL, name)
+        api.delete_namespaced_custom_object(
+            GROUP, VERSION, settings.SANDBOX_NAMESPACE, CLAIM_PLURAL, name, _request_timeout=timeout
+        )
         logger.info("Released SandboxClaim %s", name)
     except client.exceptions.ApiException as e:
         if e.status != 404:
             logger.error("Failed to delete SandboxClaim %s: %s", name, e)
+    except Exception as e:  # connection/timeout errors are not ApiException
+        logger.error("Error deleting SandboxClaim %s: %s", name, e)
