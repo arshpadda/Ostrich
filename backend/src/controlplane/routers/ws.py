@@ -9,7 +9,7 @@ from opentelemetry.propagate import inject
 
 from ..core.config import settings
 from ..database.models import ChatMessage, User
-from ..services.orchestrator import provision_sandbox_pod
+from ..services.orchestrator import claim_sandbox, release_sandbox
 
 logger = logging.getLogger(__name__)
 
@@ -66,18 +66,22 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
         await websocket.close(code=1008)
         return
 
-    # 2. Provision Sandbox Pod
-    # Performance Note (Bolt ⚡):
-    # provision_sandbox_pod is a synchronous blocking call (uses subprocess.Popen or kubernetes client).
-    # Calling it directly in this async route blocks the entire FastAPI event loop, freezing other requests.
-    # Offloading it to a threadpool via asyncio.to_thread fixes this bottleneck.
+    # 2. Claim a warm sandbox from the pool (once per session). The claim
+    # resolves to a sandbox whose stable name is the Redis channel key.
+    # claim_sandbox is a blocking kubernetes call, so offload it to a thread.
     await websocket.send_text(json.dumps({"type": "system", "event": "sandbox_provisioning"}))
-    await asyncio.to_thread(provision_sandbox_pod, user_obj.id)
+    sandbox_name = await asyncio.to_thread(claim_sandbox, user_obj.id)
+    if not sandbox_name:
+        await websocket.send_text(
+            json.dumps({"type": "error", "message": "Could not provision a sandbox. Please retry."})
+        )
+        await websocket.close(code=1011)
+        return
 
-    # 3. Setup Redis Channel
+    # 3. Setup Redis Channel (keyed by the claimed sandbox's stable name)
     redis_client = redis.Redis(connection_pool=redis_pool)
     pubsub = redis_client.pubsub()
-    channel_name = f"channel:sandbox:{user_obj.id}"
+    channel_name = f"channel:sandbox:{sandbox_name}"
     await pubsub.subscribe(channel_name)
 
     # Signal the client that the sandbox channel is ready.
@@ -136,14 +140,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
             except (json.JSONDecodeError, TypeError):
                 content = data
 
-            # Ensure the sandbox is actually running before sending the message!
-            # If it was killed by TTL or manual deletion, this spins it back up.
-            # Performance Note (Bolt ⚡):
-            # provision_sandbox_pod is a synchronous blocking call. Calling it directly here
-            # inside the while loop blocks the main event loop. We use asyncio.to_thread
-            # to offload it and prevent freezing concurrent WebSocket and API requests.
-            await asyncio.to_thread(provision_sandbox_pod, user_obj.id)
-
             # Save the message to DB
             msg_obj = await ChatMessage.create(user_id=user_obj.id, content=content, is_bot=False)
 
@@ -159,3 +155,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
         redis_task.cancel()
         await pubsub.unsubscribe(channel_name)
         await pubsub.close()
+        # Release the sandbox (deletes the claim -> tears down the pod), once per
+        # session. Fixes the prior "pod lingers until TTL" leak.
+        await asyncio.to_thread(release_sandbox, user_obj.id)

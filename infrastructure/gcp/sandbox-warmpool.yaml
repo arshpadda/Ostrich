@@ -1,0 +1,63 @@
+# agent-sandbox SandboxTemplate + SandboxWarmPool for the Ostrich agent harness.
+# The warm pool keeps pre-initialized sandboxes ready so the control plane can
+# claim one in milliseconds (replacing the hand-built Pod in orchestrator.py).
+# Each pod runs the existing Redis-streaming LangGraph worker; the worker keys
+# its Redis channel off its own hostname (== Sandbox/pod name).
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: ostrich-sandbox-template
+  namespace: sandbox-chat
+spec:
+  # Egress lockdown (zero-trust) is handled in a dedicated NetworkPolicy phase;
+  # leave the controller out of netpol management for now.
+  networkPolicyManagement: Unmanaged
+  # Persistent per-sandbox workspace (survives hibernate/resume), mounted at
+  # /workspace where the agent's file tools operate.
+  volumeClaimTemplates:
+    - metadata:
+        name: workspace
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+  podTemplate:
+    spec:
+      runtimeClassName: gvisor
+      containers:
+        - name: agent-harness
+          image: ostrich-sandbox:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: REDIS_URL
+              value: redis://redis.redis-system.svc.cluster.local:6379
+            - name: METRICS_PORT
+              value: "8000"
+            # Local/standalone: talk to Gemini directly. In the cluster proper,
+            # set LITELLM_PROXY_URL instead so traffic routes via the gateway.
+            - name: GEMINI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ostrich-llm
+                  key: GEMINI_API_KEY
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: ostrich-warmpool
+  namespace: sandbox-chat
+spec:
+  replicas: 1
+  sandboxTemplateRef:
+    name: ostrich-sandbox-template

@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import socket
 import sys
 import uuid
 
@@ -82,10 +83,13 @@ if otel_handler:
 
 logger.setLevel(logging.INFO)
 
-# Get environment variables injected by Kubernetes Orchestrator
-USER_ID = os.getenv("USER_ID")
+# Identity is the sandbox's stable hostname (== Sandbox/pod name under
+# agent-sandbox). Warm-pool pods are generic until claimed, so each worker keys
+# its Redis channel off its own identity; the control plane maps user -> sandbox
+# and bridges the WebSocket to this channel.
+SANDBOX_ID = os.getenv("SANDBOX_ID") or socket.gethostname()
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-CHANNEL_NAME = f"channel:sandbox:{USER_ID}"
+CHANNEL_NAME = f"channel:sandbox:{SANDBOX_ID}"
 
 
 def _friendly_error(exc: Exception) -> str:
@@ -142,7 +146,7 @@ async def main():
     except OSError as e:
         logger.warning("Could not start Prometheus metrics server on port %s: %s", metrics_port, e)
 
-    logger.info(f"Starting Agent Harness for User {USER_ID}")
+    logger.info("Starting Agent Harness for sandbox %s", SANDBOX_ID)
 
     # Initialize LangGraph Agent
     agent = build_graph()
@@ -173,7 +177,7 @@ async def main():
                     continue
 
                 user_text = data.get("content", "")
-                message_counter.add(1, {"user_id": USER_ID})
+                message_counter.add(1, {"sandbox_id": SANDBOX_ID})
                 logger.info(f"Received from user: {user_text}")
 
                 ctx = extract(data.get("trace_context", {}))
