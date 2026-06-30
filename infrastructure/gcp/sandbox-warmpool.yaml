@@ -55,8 +55,13 @@ spec:
           image: ostrich-sandbox:latest
           imagePullPolicy: IfNotPresent
           env:
+            # Full authenticated URL (redis://:<pw>@redis.redis-system...:6379)
+            # from the redis-auth secret; created out-of-band, never committed.
             - name: REDIS_URL
-              value: redis://redis.redis-system.svc.cluster.local:6379
+              valueFrom:
+                secretKeyRef:
+                  name: redis-auth
+                  key: REDIS_URL
             - name: METRICS_PORT
               value: "8000"
             # Local/standalone: talk to Gemini directly. In the cluster proper,
