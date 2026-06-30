@@ -9,9 +9,34 @@ metadata:
   name: ostrich-sandbox-template
   namespace: sandbox-chat
 spec:
-  # Egress lockdown (zero-trust) is handled in a dedicated NetworkPolicy phase;
-  # leave the controller out of netpol management for now.
-  networkPolicyManagement: Unmanaged
+  # Zero-trust egress: the controller manages a per-sandbox NetworkPolicy that
+  # default-denies egress except the entries below. The :443 rule exists only for
+  # local dev (the worker calls Gemini directly); in production, drop it so all
+  # LLM traffic must traverse the in-cluster gateway (ai-gateway:4000).
+  networkPolicyManagement: Managed
+  networkPolicy:
+    egress:
+      - to:  # DNS resolution
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: kube-system
+        ports:
+          - { protocol: UDP, port: 53 }
+          - { protocol: TCP, port: 53 }
+      - to:  # Redis pub/sub (streaming data plane)
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: redis-system
+        ports:
+          - { protocol: TCP, port: 6379 }
+      - to:  # LLM gateway (LiteLLM proxy)
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: ai-gateway
+        ports:
+          - { protocol: TCP, port: 4000 }
+      - ports:  # HTTPS — LOCAL direct-LLM only; remove for gateway-only prod egress
+          - { protocol: TCP, port: 443 }
   # Persistent per-sandbox workspace (survives hibernate/resume), mounted at
   # /workspace where the agent's file tools operate.
   volumeClaimTemplates:
@@ -58,6 +83,9 @@ metadata:
   name: ostrich-warmpool
   namespace: sandbox-chat
 spec:
-  replicas: 1
+  # Number of pre-warmed sandboxes kept ready for instant claims. Bump this with
+  # expected concurrency so a new session never waits on a cold start; each warm
+  # pod costs its request footprint (250m CPU / 256Mi) while idle.
+  replicas: 2
   sandboxTemplateRef:
     name: ostrich-sandbox-template

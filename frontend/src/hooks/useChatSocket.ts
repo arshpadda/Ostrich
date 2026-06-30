@@ -24,6 +24,7 @@ export function useChatSocket(enabled: boolean): UseChatSocket {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closedByUs = useRef(false);
+  const attemptRef = useRef(0); // reconnect attempt count, for capped backoff
 
   // --- streaming assembly --------------------------------------------------
   const upsertBot = useCallback((id: string, update: (m: ChatMessage) => ChatMessage) => {
@@ -80,6 +81,13 @@ export function useChatSocket(enabled: boolean): UseChatSocket {
 
   // --- connection lifecycle ------------------------------------------------
   const connect = useCallback(async () => {
+    // Dedup: never open a second socket while one is connecting/open (guards
+    // against React StrictMode double-invoke and overlapping reconnects).
+    const existing = wsRef.current;
+    if (existing && (existing.readyState === WebSocket.CONNECTING || existing.readyState === WebSocket.OPEN)) {
+      return;
+    }
+
     const token = await auth.currentUser?.getIdToken();
     if (!token) return;
 
@@ -87,6 +95,9 @@ export function useChatSocket(enabled: boolean): UseChatSocket {
     const ws = new WebSocket(`${WS_URL}/ws/chat?token=${encodeURIComponent(token)}`);
     wsRef.current = ws;
 
+    ws.onopen = () => {
+      attemptRef.current = 0; // reset backoff once connected
+    };
     ws.onmessage = (ev) => {
       try {
         handleFrame(JSON.parse(ev.data) as ServerFrame);
@@ -98,7 +109,10 @@ export function useChatSocket(enabled: boolean): UseChatSocket {
     ws.onclose = () => {
       if (closedByUs.current) return;
       setStatus("reconnecting");
-      reconnectRef.current = setTimeout(() => void connect(), 1500);
+      // Capped exponential backoff with jitter: 1s, 2s, 4s … max 30s.
+      const delay = Math.min(30000, 1000 * 2 ** attemptRef.current) + Math.random() * 500;
+      attemptRef.current += 1;
+      reconnectRef.current = setTimeout(() => void connect(), delay);
     };
   }, [handleFrame]);
 

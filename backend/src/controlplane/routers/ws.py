@@ -87,40 +87,36 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
     # Signal the client that the sandbox channel is ready.
     await websocket.send_text(json.dumps({"type": "system", "event": "connected"}))
 
-    # 3. Read from Redis and forward to WebSocket
+    # 3. Read from Redis and forward to WebSocket.
+    # Poll with get_message(timeout=...): it returns None when idle (no spurious
+    # "loop crashed" churn that the listen() generator produced on read timeouts).
     async def listen_to_redis():
+        logger.info("Backend listening to Redis channel: %s", channel_name)
         try:
-            logger.info("Backend listening to Redis channel: %s", channel_name)
             while True:
                 try:
-                    async for message in pubsub.listen():
-                        if message and message["type"] == "message":
-                            try:
-                                # Forward sandbox messages back to the frontend
-                                payload_str = message["data"]
-                                await websocket.send_text(payload_str)
-                                logger.info("Backend successfully forwarded message to WebSocket")
-
-                                # Persist only the final assembled reply. token/
-                                # tool_call frames are transport-only (see
-                                # system_design/08_frontend_streaming.md).
-                                try:
-                                    payload_json = json.loads(payload_str)
-                                    if payload_json.get("type") == "message":
-                                        await ChatMessage.create(
-                                            user_id=user_obj.id, content=payload_json.get("content", ""), is_bot=True
-                                        )
-                                except Exception as e:
-                                    logger.error("Error saving bot message to DB: %s", e)
-                            except Exception as e:
-                                logger.error("Error sending to WebSocket: %s", e)
-                except Exception as e:
-                    logger.warning("listen_to_redis pubsub loop crashed: %s. Reconnecting...", e)
+                    message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                except redis.RedisError as e:
+                    logger.warning("Redis read error on %s: %s; retrying", channel_name, e)
                     await asyncio.sleep(1)
+                    continue
+                if not message or message.get("type") != "message":
+                    continue
+                payload_str = message["data"]
+                try:
+                    # Forward the frame to the frontend.
+                    await websocket.send_text(payload_str)
+                    # Persist only the final assembled reply. token/tool_call frames
+                    # are transport-only (see system_design/08_frontend_streaming.md).
+                    payload_json = json.loads(payload_str)
+                    if payload_json.get("type") == "message":
+                        await ChatMessage.create(
+                            user_id=user_obj.id, content=payload_json.get("content", ""), is_bot=True
+                        )
+                except Exception as e:
+                    logger.error("Error forwarding/persisting frame: %s", e)
         except asyncio.CancelledError:
             logger.info("listen_to_redis task cancelled")
-        except Exception as e:
-            logger.error("listen_to_redis outer crashed: %s", e)
 
     redis_task = asyncio.create_task(listen_to_redis())
 

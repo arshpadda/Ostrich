@@ -1,32 +1,12 @@
-import { useState } from "react";
+import { lazy, Suspense } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import type { ChatMessage } from "../types";
 import { ToolCallCard } from "./ToolCallCard";
 
-function CodeBlock({ language, value }: { language: string; value: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    void navigator.clipboard.writeText(value);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
-  };
-  return (
-    <div className="group relative my-2">
-      <button
-        onClick={copy}
-        className="absolute right-2 top-2 z-10 rounded bg-white/10 px-2 py-0.5 text-[10px] text-zinc-300 opacity-0 transition group-hover:opacity-100"
-      >
-        {copied ? "Copied" : "Copy"}
-      </button>
-      <SyntaxHighlighter language={language} style={oneDark} PreTag="div" customStyle={{ margin: 0, borderRadius: 8, fontSize: 13 }}>
-        {value}
-      </SyntaxHighlighter>
-    </div>
-  );
-}
+// Split the syntax highlighter into its own chunk, loaded only when a code
+// block actually renders.
+const CodeBlock = lazy(() => import("./CodeBlock"));
 
 export function MessageBubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user";
@@ -54,7 +34,11 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
                   code({ className, children, ...props }) {
                     const match = /language-(\w+)/.exec(className || "");
                     if (match) {
-                      return <CodeBlock language={match[1]} value={String(children).replace(/\n$/, "")} />;
+                      return (
+                        <Suspense fallback={<pre className="my-2 rounded bg-black/30 p-3 text-xs">{String(children)}</pre>}>
+                          <CodeBlock language={match[1]} value={String(children).replace(/\n$/, "")} />
+                        </Suspense>
+                      );
                     }
                     return (
                       <code className="rounded bg-white/10 px-1 py-0.5 font-mono text-[0.85em]" {...props}>

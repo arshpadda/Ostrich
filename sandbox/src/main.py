@@ -53,25 +53,26 @@ formatter = jsonlogger.JsonFormatter(
 )
 stream_handler.setFormatter(formatter)
 
-# Set up OTel OTLP Exporter
+# Set up OTel OTLP exporters only when a collector endpoint is configured, so
+# local runs without a collector don't spam connection errors every interval.
 logger_provider = LoggerProvider()
 set_logger_provider(logger_provider)
+otel_handler = None
 
-try:
-    otlp_exporter = OTLPLogExporter()
-    logger_provider.add_log_record_processor(BatchLogRecordProcessor(otlp_exporter))
-    otel_handler = LoggingHandler(level=logging.NOTSET, logger_provider=logger_provider)
-except Exception as e:
-    sys.stderr.write(f"Failed to initialize OTLP Log Exporter: {e}\n")
-    otel_handler = None
+if os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"):
+    try:
+        otlp_exporter = OTLPLogExporter()
+        logger_provider.add_log_record_processor(BatchLogRecordProcessor(otlp_exporter))
+        otel_handler = LoggingHandler(level=logging.NOTSET, logger_provider=logger_provider)
+    except Exception as e:
+        sys.stderr.write(f"Failed to initialize OTLP Log Exporter: {e}\n")
 
-# Set up OTel OTLP Trace Exporter
-try:
-    tracer_provider = TracerProvider()
-    tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
-    trace.set_tracer_provider(tracer_provider)
-except Exception as e:
-    sys.stderr.write(f"Failed to initialize OTLP Trace Exporter: {e}\n")
+    try:
+        tracer_provider = TracerProvider()
+        tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+        trace.set_tracer_provider(tracer_provider)
+    except Exception as e:
+        sys.stderr.write(f"Failed to initialize OTLP Trace Exporter: {e}\n")
 
 # Remove existing handlers and attach new ones
 for h in logger.handlers[:]:

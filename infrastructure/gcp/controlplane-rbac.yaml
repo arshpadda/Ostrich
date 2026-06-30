@@ -1,0 +1,33 @@
+# RBAC for an in-cluster control plane to provision sandboxes via agent-sandbox.
+# The control plane creates/deletes SandboxClaims (and reads their status to learn
+# the assigned sandbox name). When running locally the control plane uses your
+# kubeconfig instead, so this is only required for an in-cluster deployment.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ostrich-controlplane
+  namespace: sandbox-chat
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ostrich-controlplane-claims
+  namespace: sandbox-chat
+rules:
+  - apiGroups: ["extensions.agents.x-k8s.io"]
+    resources: ["sandboxclaims"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ostrich-controlplane-claims
+  namespace: sandbox-chat
+subjects:
+  - kind: ServiceAccount
+    name: ostrich-controlplane
+    namespace: sandbox-chat
+roleRef:
+  kind: Role
+  name: ostrich-controlplane-claims
+  apiGroup: rbac.authorization.k8s.io

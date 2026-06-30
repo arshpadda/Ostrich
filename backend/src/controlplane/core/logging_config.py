@@ -1,9 +1,19 @@
 import contextvars
 import logging
+import os
 import sys
 from uuid import uuid4
 
 from fastapi import Request
+from opentelemetry import trace
+from opentelemetry._logs import set_logger_provider
+from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pythonjsonlogger import jsonlogger
 
 # Context variables to hold request-scoped metadata
@@ -54,6 +64,40 @@ def setup_logging():
     handler.addFilter(RequestContextFilter())
 
     logger.addHandler(handler)
+
+    # Define OTel Resource (Service Name)
+    resource = Resource.create({"service.name": "ostrich-controlplane"})
+
+    # Configure OpenTelemetry LoggerProvider and OTLP Exporter
+    logger_provider = LoggerProvider(resource=resource)
+    set_logger_provider(logger_provider)
+
+    # Configure OpenTelemetry TracerProvider
+    tracer_provider = TracerProvider(resource=resource)
+    trace.set_tracer_provider(tracer_provider)
+
+    # Wire OTLP exporters only when a collector endpoint is configured, so local
+    # runs without a collector don't spam connection errors every batch interval.
+    otlp_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+    if otlp_endpoint:
+        try:
+            otlp_log_exporter = OTLPLogExporter(endpoint=otlp_endpoint, insecure=True)
+            logger_provider.add_log_record_processor(BatchLogRecordProcessor(otlp_log_exporter))
+            otel_handler = LoggingHandler(level=logging.NOTSET, logger_provider=logger_provider)
+
+            # OTel logs also need the context variables
+            otel_handler.addFilter(RequestContextFilter())
+            logger.addHandler(otel_handler)
+
+            # Trace Exporter
+            otlp_trace_exporter = OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True)
+            tracer_provider.add_span_processor(BatchSpanProcessor(otlp_trace_exporter))
+        except Exception as e:
+            # Gracefully handle missing OTLP endpoint configuration
+            logger.warning(f"Failed to initialize OTLP Exporters: {e}")
+    else:
+        logger.info("OTEL_EXPORTER_OTLP_ENDPOINT not set; skipping OTLP exporters.")
+
     logger.setLevel(logging.INFO)
 
     return logger
