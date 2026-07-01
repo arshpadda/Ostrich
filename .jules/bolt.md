@@ -26,3 +26,6 @@
 ## 2026-06-30 - Prevent O(N) Re-renders During WebSocket Streaming
 **Learning:** In a chat interface where messages are stored in an array (e.g., `messages`) and rendered iteratively, streaming tokens via WebSocket causes the array reference or individual objects to update rapidly. Without memoization, every token update forces *all* previously rendered message components to re-render, resulting in O(N) rendering performance cost during streaming.
 **Action:** Always wrap components rendered in long lists (like `MessageBubble`) with `React.memo()`. This ensures that only the currently streaming message (whose props change) re-renders, while older messages bypass the render cycle.
+## 2024-07-02 - Redis Async Iteration Over Polling
+**Learning:** Using an `async for message in pubsub.listen():` loop replaces CPU-intensive `while True` polling with `pubsub.get_message(timeout=1.0)` and `asyncio.sleep()`. However, `pubsub.listen()` can sometimes raise spurious `redis.exceptions.TimeoutError` on read timeouts which break the loop if not handled correctly.
+**Action:** Use `async for` over `get_message` for Redis polling in async code to reduce CPU overhead, but be sure to wrap it in a `try... except redis.exceptions.TimeoutError` and loop it to gracefully ignore expected timeouts and continue.
