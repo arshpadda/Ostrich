@@ -1,8 +1,12 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, memo } from "react";
 import type { ChatMessage } from "../types";
 import { MessageBubble } from "./MessageBubble";
 
-export function MessageList({ messages }: { messages: ChatMessage[] }) {
+// Performance Note (Bolt ⚡):
+// Wrapping MessageList in React.memo() prevents it from re-rendering and
+// performing unnecessary layout/diff checks when sibling state in ChatView
+// (like status, error, or streaming flags) changes while messages remain the same.
+export const MessageList = memo(function MessageList({ messages }: { messages: ChatMessage[] }) {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -27,4 +31,4 @@ export function MessageList({ messages }: { messages: ChatMessage[] }) {
       </div>
     </div>
   );
-}
+});
