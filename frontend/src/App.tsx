@@ -1,6 +1,11 @@
+import { lazy, Suspense } from "react";
 import { useAuth } from "./auth/AuthContext";
 import { Login } from "./components/Login";
-import { ChatView } from "./components/ChatView";
+
+// Performance Note (Bolt ⚡):
+// Code-split the ChatView component so that unauthenticated users only loading
+// the Login page do not have to download the large ChatView and its dependencies.
+const ChatView = lazy(() => import("./components/ChatView").then(m => ({ default: m.ChatView })));
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -13,5 +18,15 @@ export default function App() {
     );
   }
 
-  return user ? <ChatView /> : <Login />;
+  return user ? (
+    <Suspense
+      fallback={
+        <div className="flex h-full items-center justify-center text-sm text-zinc-500">
+          Loading…
+        </div>
+      }
+    >
+      <ChatView />
+    </Suspense>
+  ) : <Login />;
 }
