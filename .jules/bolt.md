@@ -26,3 +26,7 @@
 ## 2026-06-30 - Prevent O(N) Re-renders During WebSocket Streaming
 **Learning:** In a chat interface where messages are stored in an array (e.g., `messages`) and rendered iteratively, streaming tokens via WebSocket causes the array reference or individual objects to update rapidly. Without memoization, every token update forces *all* previously rendered message components to re-render, resulting in O(N) rendering performance cost during streaming.
 **Action:** Always wrap components rendered in long lists (like `MessageBubble`) with `React.memo()`. This ensures that only the currently streaming message (whose props change) re-renders, while older messages bypass the render cycle.
+
+## 2024-07-03 - Initial Bundle Size Optimization via React.lazy
+**Learning:** Synchronously importing heavy components (like `ChatView` which pulls in large dependencies like `react-markdown`) in the main routing file (`App.tsx`) forces unauthenticated users to download a large JavaScript bundle just to see the simple Login screen. This unnecessarily slows down the initial page load time.
+**Action:** Always use `React.lazy()` and `Suspense` to code-split large authenticated-only route components from the main entry point, so that unauthenticated users only download the minimal code required for the Login view.
