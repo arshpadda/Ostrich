@@ -5,8 +5,22 @@ import { MessageBubble } from "./MessageBubble";
 export function MessageList({ messages }: { messages: ChatMessage[] }) {
   const endRef = useRef<HTMLDivElement>(null);
 
+  // Performance Note (Bolt ⚡):
+  // Throttle scroll events during high-frequency token streaming to prevent
+  // browser layout thrashing and CPU spikes. When actively streaming, we use
+  // 'auto' scrolling to avoid overlapping animation queues.
+  const lastScrollTime = useRef(0);
+
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    const isStreaming = messages.some((m) => m.role === "bot" && m.streaming);
+    const now = Date.now();
+
+    if (isStreaming && now - lastScrollTime.current < 100) {
+      return;
+    }
+
+    lastScrollTime.current = now;
+    endRef.current?.scrollIntoView({ behavior: isStreaming ? "auto" : "smooth" });
   }, [messages]);
 
   if (messages.length === 0) {
