@@ -26,3 +26,7 @@
 ## 2026-06-30 - Prevent O(N) Re-renders During WebSocket Streaming
 **Learning:** In a chat interface where messages are stored in an array (e.g., `messages`) and rendered iteratively, streaming tokens via WebSocket causes the array reference or individual objects to update rapidly. Without memoization, every token update forces *all* previously rendered message components to re-render, resulting in O(N) rendering performance cost during streaming.
 **Action:** Always wrap components rendered in long lists (like `MessageBubble`) with `React.memo()`. This ensures that only the currently streaming message (whose props change) re-renders, while older messages bypass the render cycle.
+
+## 2024-07-04 - [React Layout Thrashing During Streaming]
+**Learning:** High-frequency WebSocket token streaming causes severe layout thrashing in React when `scrollIntoView({ behavior: "smooth" })` runs on every new chunk. The browser stacks continuous overlapping scroll animations which completely saturates the main thread.
+**Action:** Throttle the scroll calls on a ref (e.g. 100ms) and dynamically switch scroll `behavior` from `"smooth"` to `"auto"` when a message is actively `.streaming`, reverting to `"smooth"` for final user-initiated chats.
