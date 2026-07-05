@@ -1,6 +1,9 @@
-import { useState, type KeyboardEvent } from "react";
+import { useState, memo, type KeyboardEvent } from "react";
 
-export function Composer({
+// Performance Note (Bolt ⚡):
+// Wrapping Composer in React.memo prevents it from re-rendering 50+ times per second
+// during WebSocket token streaming, as its props only change when streaming starts/stops.
+export const Composer = memo(function Composer({
   onSend,
   onStop,
   streaming,
@@ -56,4 +59,4 @@ export function Composer({
       </div>
     </div>
   );
-}
+});

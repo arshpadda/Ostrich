@@ -31,7 +31,18 @@ export function useChatSocket(enabled: boolean): UseChatSocket {
   // --- streaming assembly --------------------------------------------------
   const upsertBot = useCallback((id: string, update: (m: ChatMessage) => ChatMessage) => {
     setMessages((prev) => {
-      const idx = prev.findIndex((m) => m.id === id && m.role === "bot");
+      // Performance Note (Bolt ⚡):
+      // In ES2022 without findLastIndex, we can manually check backwards.
+      // This turns an O(N) array search into an O(1) operation during streaming,
+      // since the active streaming message is always at the end.
+      let idx = -1;
+      for (let i = prev.length - 1; i >= 0; i--) {
+        if (prev[i].id === id && prev[i].role === "bot") {
+          idx = i;
+          break;
+        }
+      }
+
       if (idx === -1) {
         const fresh: ChatMessage = { id, role: "bot", content: "", tools: [], streaming: true };
         return [...prev, update(fresh)];

@@ -26,3 +26,11 @@
 ## 2026-06-30 - Prevent O(N) Re-renders During WebSocket Streaming
 **Learning:** In a chat interface where messages are stored in an array (e.g., `messages`) and rendered iteratively, streaming tokens via WebSocket causes the array reference or individual objects to update rapidly. Without memoization, every token update forces *all* previously rendered message components to re-render, resulting in O(N) rendering performance cost during streaming.
 **Action:** Always wrap components rendered in long lists (like `MessageBubble`) with `React.memo()`. This ensures that only the currently streaming message (whose props change) re-renders, while older messages bypass the render cycle.
+
+## 2026-07-05 - Optimizing Array Search for Streaming WebSocket Messages
+**Learning:** In React components that accumulate a list of items (like a chat interface receiving streaming tokens), using `array.findIndex()` to update the last streaming item is an `O(N)` operation on every token update. As the chat history grows, this causes significant CPU overhead.
+**Action:** Always use `array.findLastIndex()` (or access `array[array.length - 1]`) when you know the active/streaming element is at or near the end of the array, changing the update from `O(N)` to `O(1)`.
+
+## 2026-07-05 - Preventing Deep Component Re-renders During High-Frequency Updates
+**Learning:** High-frequency WebSocket streaming (e.g., 50+ tokens per second) will cause the entire parent component to re-render, forcing all child components to re-render even if their props haven't changed.
+**Action:** Identify static or semi-static child components (like `Composer` or `ToolCallCard`) within the high-frequency re-render path and wrap them in `React.memo()`. This ensures they bypass the render cycle entirely unless their specific props change, saving significant CPU cycles.
