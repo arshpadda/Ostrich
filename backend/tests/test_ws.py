@@ -91,6 +91,7 @@ def test_ws_connect_claims_and_releases():
         with TestClient(app) as client, client.websocket_connect("/ws/chat?token=ok") as wsconn:
             assert json.loads(wsconn.receive_text())["event"] == "sandbox_provisioning"
             assert json.loads(wsconn.receive_text())["event"] == "connected"
+            wsconn.close()
     assert claim.called
     assert release.called
 
