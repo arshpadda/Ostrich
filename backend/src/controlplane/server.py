@@ -4,6 +4,7 @@ from typing import Dict
 import redis.asyncio as redis
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from prometheus_fastapi_instrumentator import Instrumentator
 from tortoise import connections
@@ -58,6 +59,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Performance Note (Bolt ⚡):
+# Add GZipMiddleware to automatically compress large responses (e.g., chat history payloads).
+# This reduces network transit time and bandwidth usage for data-heavy endpoints.
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
 @app.get("/livez", status_code=200)
