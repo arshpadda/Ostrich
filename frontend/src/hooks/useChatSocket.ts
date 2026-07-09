@@ -31,7 +31,20 @@ export function useChatSocket(enabled: boolean): UseChatSocket {
   // --- streaming assembly --------------------------------------------------
   const upsertBot = useCallback((id: string, update: (m: ChatMessage) => ChatMessage) => {
     setMessages((prev) => {
-      const idx = prev.findIndex((m) => m.id === id && m.role === "bot");
+      // Performance Note (Bolt ⚡):
+      // Searching from the end changes the search complexity from O(N) to O(1)
+      // for recent messages. During active streaming, the target message is
+      // always at the very end of the array. Scanning from the end prevents
+      // redundant iteration over older history and reduces main thread blocking.
+      // We implement this manually since target is ES2022 and findLastIndex is ES2023.
+      let idx = -1;
+      for (let i = prev.length - 1; i >= 0; i--) {
+        const m = prev[i];
+        if (m.id === id && m.role === "bot") {
+          idx = i;
+          break;
+        }
+      }
       if (idx === -1) {
         const fresh: ChatMessage = { id, role: "bot", content: "", tools: [], streaming: true };
         return [...prev, update(fresh)];
@@ -66,7 +79,17 @@ export function useChatSocket(enabled: boolean): UseChatSocket {
             if (frame.status === "running") {
               tools.push({ tool: frame.tool, args: frame.args, status: "running" });
             } else {
-              const i = tools.findIndex((t) => t.tool === frame.tool && t.status === "running");
+              // Performance Note (Bolt ⚡):
+              // Searching from the end for the same reason as above. The currently
+              // resolving tool call is almost always at the end of the tools list.
+              let i = -1;
+              for (let k = tools.length - 1; k >= 0; k--) {
+                const t = tools[k];
+                if (t.tool === frame.tool && t.status === "running") {
+                  i = k;
+                  break;
+                }
+              }
               const done: ToolCall = { tool: frame.tool, status: "done", resultPreview: frame.result_preview };
               if (i === -1) tools.push(done);
               else tools[i] = { ...tools[i], status: "done", resultPreview: frame.result_preview };
