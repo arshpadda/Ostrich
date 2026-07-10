@@ -26,3 +26,7 @@
 ## 2026-06-30 - Prevent O(N) Re-renders During WebSocket Streaming
 **Learning:** In a chat interface where messages are stored in an array (e.g., `messages`) and rendered iteratively, streaming tokens via WebSocket causes the array reference or individual objects to update rapidly. Without memoization, every token update forces *all* previously rendered message components to re-render, resulting in O(N) rendering performance cost during streaming.
 **Action:** Always wrap components rendered in long lists (like `MessageBubble`) with `React.memo()`. This ensures that only the currently streaming message (whose props change) re-renders, while older messages bypass the render cycle.
+
+## 2026-07-01 - Optimizing Message Lookups During WebSocket Streaming
+**Learning:** During WebSocket streaming, tokens arrive rapidly and almost always target the last message in a growing message list array. Using standard `findIndex()` starts the search from the beginning of the array, resulting in an O(N) lookup cost for every token.
+**Action:** Always use a reverse `for` loop (or `.findLastIndex()` if ES2023 array methods are supported by the TypeScript target) when searching for the most recently added or updated item in a list that appends items to the end. This reduces the lookup cost to O(1) in the hot path.

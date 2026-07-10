@@ -31,7 +31,18 @@ export function useChatSocket(enabled: boolean): UseChatSocket {
   // --- streaming assembly --------------------------------------------------
   const upsertBot = useCallback((id: string, update: (m: ChatMessage) => ChatMessage) => {
     setMessages((prev) => {
-      const idx = prev.findIndex((m) => m.id === id && m.role === "bot");
+      // Performance Note (Bolt ⚡):
+      // Streaming tokens arrive rapidly and almost always target the last message in the list.
+      // Using a reverse loop (instead of .findIndex) changes the lookup from O(N) to O(1) in the hot path.
+      // We avoid .findLastIndex as ES2023 array methods are not supported natively by the TS target.
+      let idx = -1;
+      for (let i = prev.length - 1; i >= 0; i--) {
+        if (prev[i].id === id && prev[i].role === "bot") {
+          idx = i;
+          break;
+        }
+      }
+
       if (idx === -1) {
         const fresh: ChatMessage = { id, role: "bot", content: "", tools: [], streaming: true };
         return [...prev, update(fresh)];
