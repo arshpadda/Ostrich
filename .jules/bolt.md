@@ -26,3 +26,11 @@
 ## 2026-06-30 - Prevent O(N) Re-renders During WebSocket Streaming
 **Learning:** In a chat interface where messages are stored in an array (e.g., `messages`) and rendered iteratively, streaming tokens via WebSocket causes the array reference or individual objects to update rapidly. Without memoization, every token update forces *all* previously rendered message components to re-render, resulting in O(N) rendering performance cost during streaming.
 **Action:** Always wrap components rendered in long lists (like `MessageBubble`) with `React.memo()`. This ensures that only the currently streaming message (whose props change) re-renders, while older messages bypass the render cycle.
+
+## 2024-05-18 - Redis polling error handling regression
+**Learning:** In the Redis pubsub listener (`ws.py`), replacing the `while True` polling loop containing `pubsub.get_message(timeout=1.0)` with a native `async for message in pubsub.listen():` generator seems like a valid performance optimization, but it can introduce critical regressions. The original code's inner `try...except redis.RedisError` block ensures the subscription recovers from transient errors (like timeouts), whereas `listen()` combined with outer exception handling will permanently terminate the task, causing silent failures on the WebSocket connection.
+**Action:** Do not blindly replace `get_message` loops with `listen()` without understanding the exception handling design. Always read the entire file using `read_file` to confirm how errors are caught and retried.
+
+## 2024-05-18 - Memoize ToolCallCard to Prevent O(N) Re-renders
+**Learning:** When tool calls are rendered in a chat application, they are often children of a parent message component that updates frequently during streaming. Without memoization, all previously rendered tool calls will unnecessarily re-render on every token update.
+**Action:** Always wrap list items or expensive sub-components like `ToolCallCard` with `React.memo` to skip rendering when their props haven't changed.
