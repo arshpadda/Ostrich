@@ -26,3 +26,7 @@
 ## 2026-06-30 - Prevent O(N) Re-renders During WebSocket Streaming
 **Learning:** In a chat interface where messages are stored in an array (e.g., `messages`) and rendered iteratively, streaming tokens via WebSocket causes the array reference or individual objects to update rapidly. Without memoization, every token update forces *all* previously rendered message components to re-render, resulting in O(N) rendering performance cost during streaming.
 **Action:** Always wrap components rendered in long lists (like `MessageBubble`) with `React.memo()`. This ensures that only the currently streaming message (whose props change) re-renders, while older messages bypass the render cycle.
+
+## 2026-07-02 - Memoize Sub-components in Streaming Lists
+**Learning:** Even if a parent list item (like `MessageBubble`) is wrapped in `React.memo`, any sub-components rendered within it (like `ToolCallCard` or `CodeBlock`) will still re-render when the parent updates (e.g., during WebSocket token streaming). This causes unnecessary CPU overhead, especially for expensive components like syntax highlighters.
+**Action:** Always wrap heavy or complex sub-components rendered inside frequently updating parents with `React.memo()` to ensure they only re-render when their specific props change, minimizing the rendering cost during streaming.
