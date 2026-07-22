@@ -1,4 +1,6 @@
-## 2024-05-18 - FastAPI Healthcheck Optimization\n**Learning:** In FastAPI, simple static endpoints (like healthchecks) defined as synchronous `def` incur unnecessary overhead by being dispatched to an external threadpool. Since they perform no blocking I/O, this is a pure loss.\n**Action:** Always define pure-data or non-blocking FastAPI endpoints as `async def` to run them directly on the main event loop.
+## 2024-05-18 - FastAPI Healthcheck Optimization
+**Learning:** In FastAPI, simple static endpoints (like healthchecks) defined as synchronous `def` incur unnecessary overhead by being dispatched to an external threadpool. Since they perform no blocking I/O, this is a pure loss.
+**Action:** Always define pure-data or non-blocking FastAPI endpoints as `async def` to run them directly on the main event loop.
 
 ## 2024-05-18 - Tortoise ORM Pydantic Serialization Optimization
 **Learning:** In Tortoise ORM, resolving Pydantic schemas sequentially in an async list comprehension (e.g., `[await Schema.from_tortoise_orm(msg) for msg in messages]`) incurs significant Python-level async iteration overhead and can cause N+1 query problems.
@@ -26,3 +28,8 @@
 ## 2026-06-30 - Prevent O(N) Re-renders During WebSocket Streaming
 **Learning:** In a chat interface where messages are stored in an array (e.g., `messages`) and rendered iteratively, streaming tokens via WebSocket causes the array reference or individual objects to update rapidly. Without memoization, every token update forces *all* previously rendered message components to re-render, resulting in O(N) rendering performance cost during streaming.
 **Action:** Always wrap components rendered in long lists (like `MessageBubble`) with `React.memo()`. This ensures that only the currently streaming message (whose props change) re-renders, while older messages bypass the render cycle.
+
+
+## 2026-07-22 - Prevent O(N) Sub-Component Re-renders During WebSocket Streaming
+**Learning:** Even if a parent list item (e.g. `MessageBubble`) is memoized, if it receives rapid prop updates (like streaming tokens), any expensive *child* components it renders (like `ToolCallCard` or `CodeBlock` syntax highlighters) will still re-render on every token. This can cause severe CPU spikes and lag during generation if those children aren't individually memoized.
+**Action:** Always wrap heavy or complex sub-components rendered within a frequently-updating streaming container with `React.memo()`, ensuring their static props allow them to bypass the render cycle while the parent updates.
