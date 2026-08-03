@@ -3,10 +3,34 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage } from "../types";
 import { ToolCallCard } from "./ToolCallCard";
+import type { Components } from "react-markdown";
 
 // Split the syntax highlighter into its own chunk, loaded only when a code
 // block actually renders.
 const CodeBlock = lazy(() => import("./CodeBlock"));
+
+const REMARK_PLUGINS = [remarkGfm];
+
+// Performance Note (Bolt ⚡):
+// Extracting static configuration objects outside the render function prevents
+// recreation of objects and functions during streaming, avoiding unmounting/remounting child components.
+const MARKDOWN_COMPONENTS: Components = {
+  code({ className, children, ...props }) {
+    const match = /language-(\w+)/.exec(className || "");
+    if (match) {
+      return (
+        <Suspense fallback={<pre className="my-2 rounded bg-black/30 p-3 text-xs">{String(children)}</pre>}>
+          <CodeBlock language={match[1]} value={String(children).replace(/\n$/, "")} />
+        </Suspense>
+      );
+    }
+    return (
+      <code className="rounded bg-white/10 px-1 py-0.5 font-mono text-[0.85em]" {...props}>
+        {children}
+      </code>
+    );
+  },
+};
 
 // Performance Note (Bolt ⚡):
 // Wrapping MessageBubble in React.memo prevents O(N) re-renders of older messages
@@ -32,24 +56,8 @@ export const MessageBubble = memo(function MessageBubble({ message }: { message:
           ) : (
             <div className="prose-chat space-y-2">
               <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={{
-                  code({ className, children, ...props }) {
-                    const match = /language-(\w+)/.exec(className || "");
-                    if (match) {
-                      return (
-                        <Suspense fallback={<pre className="my-2 rounded bg-black/30 p-3 text-xs">{String(children)}</pre>}>
-                          <CodeBlock language={match[1]} value={String(children).replace(/\n$/, "")} />
-                        </Suspense>
-                      );
-                    }
-                    return (
-                      <code className="rounded bg-white/10 px-1 py-0.5 font-mono text-[0.85em]" {...props}>
-                        {children}
-                      </code>
-                    );
-                  },
-                }}
+                remarkPlugins={REMARK_PLUGINS}
+                components={MARKDOWN_COMPONENTS}
               >
                 {message.content}
               </ReactMarkdown>
