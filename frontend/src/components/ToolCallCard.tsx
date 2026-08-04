@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, memo } from "react";
 import type { ToolCall } from "../types";
 
 const TOOL_ICONS: Record<string, string> = {
@@ -9,7 +9,7 @@ const TOOL_ICONS: Record<string, string> = {
   get_weather: "🌤",
 };
 
-export function ToolCallCard({ call }: { call: ToolCall }) {
+export const ToolCallCard = memo(function ToolCallCard({ call }: { call: ToolCall }) {
   const [open, setOpen] = useState(false);
   const running = call.status === "running";
 
@@ -41,4 +41,4 @@ export function ToolCallCard({ call }: { call: ToolCall }) {
       )}
     </div>
   );
-}
+});
