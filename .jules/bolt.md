@@ -26,3 +26,7 @@
 ## 2026-06-30 - Prevent O(N) Re-renders During WebSocket Streaming
 **Learning:** In a chat interface where messages are stored in an array (e.g., `messages`) and rendered iteratively, streaming tokens via WebSocket causes the array reference or individual objects to update rapidly. Without memoization, every token update forces *all* previously rendered message components to re-render, resulting in O(N) rendering performance cost during streaming.
 **Action:** Always wrap components rendered in long lists (like `MessageBubble`) with `React.memo()`. This ensures that only the currently streaming message (whose props change) re-renders, while older messages bypass the render cycle.
+
+## 2024-05-18 - ReactMarkdown Re-render Optimization
+**Learning:** Passing inline configuration objects (like `remarkPlugins={[remarkGfm]}` or `components={{ code: ... }}`) directly as props to `ReactMarkdown` causes the objects to be recreated on every render. During frequent updates (like WebSocket streaming in a chat app), this forces `ReactMarkdown` to unmount and remount subcomponents unnecessarily, leading to an O(N) performance cost where N is the length or complexity of the message history.
+**Action:** Always extract static configuration arrays or objects for libraries like `ReactMarkdown` outside of the React component's render cycle so their references remain stable across re-renders.
