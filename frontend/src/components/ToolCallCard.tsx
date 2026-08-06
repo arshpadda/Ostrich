@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, memo } from "react";
 import type { ToolCall } from "../types";
 
 const TOOL_ICONS: Record<string, string> = {
@@ -9,7 +9,9 @@ const TOOL_ICONS: Record<string, string> = {
   get_weather: "🌤",
 };
 
-export function ToolCallCard({ call }: { call: ToolCall }) {
+// Performance Note (Bolt ⚡): Wrapped in memo to prevent O(N) re-renders
+// when parent MessageBubble re-renders during websocket streams
+export const ToolCallCard = memo(function ToolCallCard({ call }: { call: ToolCall }) {
   const [open, setOpen] = useState(false);
   const running = call.status === "running";
 
@@ -41,4 +43,4 @@ export function ToolCallCard({ call }: { call: ToolCall }) {
       )}
     </div>
   );
-}
+});

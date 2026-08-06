@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useState, memo } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
 // Lazy-loaded on demand (see MessageBubble) so react-syntax-highlighter — the
 // single largest dependency — is split out of the main bundle.
-export default function CodeBlock({ language, value }: { language: string; value: string }) {
+// Performance Note (Bolt ⚡): Wrapped in memo to prevent O(N) re-renders
+// when parent MessageBubble re-renders during websocket streams
+export default memo(function CodeBlock({ language, value }: { language: string; value: string }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
     void navigator.clipboard.writeText(value);
@@ -24,4 +26,4 @@ export default function CodeBlock({ language, value }: { language: string; value
       </SyntaxHighlighter>
     </div>
   );
-}
+});
