@@ -9,6 +9,8 @@ from google.cloud import storage
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from src.kernel import kernel_session
+
 logger = logging.getLogger("sandbox-agent")
 
 # Tool guardrails: confine file operations to the workspace and bound output sizes
@@ -61,7 +63,10 @@ class ExecuteBashInput(BaseModel):
 
 @tool(args_schema=ExecuteBashInput)
 def execute_bash(command: str) -> str:
-    """Executes a bash command in the terminal and returns the output. Use this to install packages, run tests, or inspect the environment."""
+    """Execute a shell command for SYSTEM-LEVEL operations only: installing packages
+    (pip/apt/npm), git, curl, running compiled binaries, or inspecting the environment.
+    Each call is a fresh shell - no state persists. For Python code that needs variables,
+    imports, or results to persist across steps, use `execute_python` instead."""
     try:
         logger.info(f"Executing bash: {command}")
         result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=60)
@@ -74,6 +79,42 @@ def execute_bash(command: str) -> str:
         return json.dumps({"status": "error", "data": None, "error_message": "Command timed out after 60 seconds."})
     except subprocess.SubprocessError as e:
         return json.dumps({"status": "error", "data": None, "error_message": f"Bash execution failed: {str(e)}"})
+
+
+class ExecutePythonInput(BaseModel):
+    code: str = Field(description="The Python code to execute in the persistent kernel.")
+
+
+@tool(args_schema=ExecutePythonInput)
+async def execute_python(code: str) -> str:
+    """Execute Python code in a persistent Jupyter kernel. Variables, imports, and
+    state PERSIST across calls, so you can build up work incrementally like a notebook.
+    Prefer this for all Python computation, data analysis, and plotting. Returns stdout,
+    the value of the last expression, and structured errors. If a package is missing,
+    install it with `execute_bash` (pip install) first, then import it here.
+
+    Note: if `namespace_reset` is true in the response, the kernel had to restart and
+    all previously defined variables and imports are gone - re-run your setup code."""
+    logger.info("Executing python (%d chars) in kernel...", len(code))
+    try:
+        result = await kernel_session.execute(code)
+        payload = result.to_dict()
+        if result.status == "error" and result.error:
+            logger.info("execute_python raised %s", result.error.get("ename"))
+        return json.dumps(payload)
+    except Exception as e:  # Kernel/transport failure - surface, don't crash the turn.
+        logger.error("execute_python transport error: %s", str(e), exc_info=True)
+        return json.dumps(
+            {
+                "status": "error",
+                "stdout": "",
+                "result": None,
+                "displays": [],
+                "error": {"ename": type(e).__name__, "evalue": str(e), "traceback": ""},
+                "execution_count": None,
+                "namespace_reset": False,
+            }
+        )
 
 
 class ReadFileInput(BaseModel):

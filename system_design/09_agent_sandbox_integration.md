@@ -31,7 +31,8 @@ WS connect ─► control plane: claim_sandbox(user)
                  └─ SandboxClaim ─► controller binds a warm Sandbox
                       └─ status.sandbox.name = "ostrich-warmpool-xxxxx"
             ─► bridge WS ⇄ Redis channel:sandbox:<that name>
-user msg ─► publish to channel ─► worker streams token/tool_call/message frames
+user msg ─► Pub/Sub ─► dispatcher ─► worker /deliver (see 12_durable_delivery.md)
+            worker streams token/tool_call frames on the channel; final reply via callback
 WS disconnect ─► release_sandbox(user) ─► claim deleted ─► pod torn down
                  (warm pool auto-replenishes)
 ```

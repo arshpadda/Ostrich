@@ -51,7 +51,7 @@ class FakeRedis:
         self.published.append((channel, data))
 
 
-def _base_patches(fake_redis, *, verify=None, chat_create=None, claim=None, release=None, session=None):
+def _base_patches(fake_redis, *, verify=None, chat_create=None, claim=None, release=None, session=None, publish=None):
     """Patches for the external edges; override specific ones per test."""
     user = SimpleNamespace(id=uuid.uuid4())
     fake_session = session or MagicMock(save=AsyncMock())
@@ -67,6 +67,7 @@ def _base_patches(fake_redis, *, verify=None, chat_create=None, claim=None, rele
         patch.object(ws_module, "claim_sandbox", claim or MagicMock(return_value="test-sb")),
         patch.object(ws_module, "release_sandbox", release or MagicMock()),
         patch.object(ws_module.redis, "Redis", MagicMock(return_value=fake_redis)),
+        patch.object(ws_module, "publish_user_message", publish or AsyncMock(return_value="pubsub-1")),
     ]
 
 
@@ -95,7 +96,8 @@ def test_ws_connect_claims_and_releases():
     assert release.called
 
 
-def test_ws_forwards_and_persists_bot_message():
+def test_ws_forwards_bot_frame_without_persisting():
+    """The relay only forwards frames; the final reply is persisted by the sandbox callback."""
     bot_frame = json.dumps({"type": "message", "message_id": "m1", "role": "bot", "content": "hi there", "done": True})
     fake_redis = FakeRedis(frames=[bot_frame])
     create = AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4()))
@@ -109,8 +111,62 @@ def test_ws_forwards_and_persists_bot_message():
             forwarded = json.loads(wsconn.receive_text())  # the bot frame
             assert forwarded["type"] == "message"
             assert forwarded["content"] == "hi there"
-    assert create.await_count >= 1
-    assert create.await_args.kwargs.get("is_bot") is True
+    assert all(c.kwargs.get("is_bot") is not True for c in create.await_args_list)
+
+
+def test_ws_skips_own_cancel_echo():
+    cancel = json.dumps({"type": "cancel"})
+    token = json.dumps({"type": "token", "message_id": "m1", "delta": "x"})
+    fake_redis = FakeRedis(frames=[cancel, token])
+    patches = _base_patches(fake_redis)
+    with ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        with TestClient(app) as client, client.websocket_connect("/ws/chat?token=ok") as wsconn:
+            json.loads(wsconn.receive_text())  # provisioning
+            json.loads(wsconn.receive_text())  # connected
+            assert json.loads(wsconn.receive_text())["type"] == "token"  # cancel never reaches the browser
+
+
+def test_ws_user_message_goes_to_pubsub_and_cancel_bypasses_it():
+    fake_redis = FakeRedis()
+    publish = AsyncMock(return_value="pubsub-1")
+    msg_id = uuid.uuid4()
+    create = AsyncMock(return_value=SimpleNamespace(id=msg_id))
+    patches = _base_patches(fake_redis, publish=publish, chat_create=create)
+    with ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        with TestClient(app) as client, client.websocket_connect("/ws/chat?token=ok") as wsconn:
+            json.loads(wsconn.receive_text())  # provisioning
+            json.loads(wsconn.receive_text())  # connected
+            wsconn.send_text(json.dumps({"type": "user_message", "content": "hello"}))
+            wsconn.send_text(json.dumps({"type": "cancel"}))
+            # Round-trip a second message so both frames above are fully processed.
+            wsconn.send_text(json.dumps({"type": "user_message", "content": "again"}))
+    assert publish.await_count == 2
+    first = publish.await_args_list[0].kwargs
+    assert first["sandbox_name"] == "test-sb"
+    assert first["message_id"] == str(msg_id)
+    assert first["body"]["content"] == "hello"
+    assert first["body"]["callback_url"].endswith("/internal/sandbox/reply")
+    # Cancel went straight to Redis (not through the queue); user messages did not.
+    assert [json.loads(d) for _, d in fake_redis.published] == [{"type": "cancel"}]
+
+
+def test_ws_publish_failure_tells_user():
+    fake_redis = FakeRedis()
+    publish = AsyncMock(side_effect=RuntimeError("pubsub down"))
+    patches = _base_patches(fake_redis, publish=publish)
+    with ExitStack() as stack:
+        for p in patches:
+            stack.enter_context(p)
+        with TestClient(app) as client, client.websocket_connect("/ws/chat?token=ok") as wsconn:
+            json.loads(wsconn.receive_text())  # provisioning
+            json.loads(wsconn.receive_text())  # connected
+            wsconn.send_text(json.dumps({"type": "user_message", "content": "hello"}))
+            err = json.loads(wsconn.receive_text())
+            assert err["type"] == "error"
 
 
 def test_ws_records_and_releases_sandbox_session():
@@ -126,6 +182,7 @@ def test_ws_records_and_releases_sandbox_session():
         patch.object(ws_module, "claim_sandbox", MagicMock(return_value="sb-42")),
         patch.object(ws_module, "release_sandbox", MagicMock()),
         patch.object(ws_module.redis, "Redis", MagicMock(return_value=fake_redis)),
+        patch.object(ws_module, "publish_user_message", AsyncMock(return_value="pubsub-1")),
     ]
     with ExitStack() as stack:
         for p in patches:

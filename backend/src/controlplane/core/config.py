@@ -22,6 +22,19 @@ class Settings(BaseSettings):
     # slow/hung API server can't pin a threadpool worker indefinitely.
     SANDBOX_KUBE_REQUEST_TIMEOUT_SECONDS: int = 10
 
+    # Durable inbound delivery (see system_design/12_durable_delivery.md). User
+    # messages are published to this Pub/Sub topic; a separate dispatcher validates
+    # and hands them to the sandbox. PUBSUB_EMULATOR_HOST is honoured by the client
+    # library for local dev.
+    PROJECT_ID: str = ""
+    PUBSUB_TOPIC: str = "user-messages"
+    # Public base URL of this service. Sent with each delivery so the sandbox knows
+    # where to POST the final reply (/internal/sandbox/reply).
+    CONTROLPLANE_PUBLIC_URL: str = "http://localhost:8001"
+    # HMAC key shared with the dispatcher only (never given to the sandbox). Signs
+    # the short-lived per-delivery token the sandbox presents on its reply callback.
+    CALLBACK_SIGNING_SECRET: str = ""
+
     model_config = {"env_file": "../.env", "extra": "ignore"}
 
 

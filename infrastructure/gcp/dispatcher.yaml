@@ -1,0 +1,55 @@
+# Dispatcher: consumes the user-messages Pub/Sub subscription, validates that the
+# user owns an active session on the target sandbox, and POSTs the message to that
+# pod. Separate from the control plane so it scales independently and the sandbox
+# never needs GCP credentials. See system_design/12_durable_delivery.md.
+#
+# Secret (created out-of-band, never committed):
+#   kubectl create secret generic dispatcher-config -n dispatcher-system \
+#     --from-literal=DATABASE_URL=... --from-literal=CALLBACK_SIGNING_SECRET=...
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dispatcher-system
+  labels:
+    kubernetes.io/metadata.name: dispatcher-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ostrich-dispatcher
+  namespace: dispatcher-system
+  annotations:
+    iam.gke.io/gcp-service-account: ostrich-dispatcher@ostr-499118.iam.gserviceaccount.com
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ostrich-dispatcher
+  namespace: dispatcher-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ostrich-dispatcher
+  template:
+    metadata:
+      labels:
+        app: ostrich-dispatcher
+    spec:
+      serviceAccountName: ostrich-dispatcher
+      containers:
+        - name: dispatcher
+          image: us-central1-docker.pkg.dev/ostr-499118/ostrich-repo/ostrich-dispatcher:latest
+          env:
+            - { name: PROJECT_ID, value: ostr-499118 }
+            - { name: PUBSUB_SUBSCRIPTION, value: user-messages-dispatcher }
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: dispatcher-config, key: DATABASE_URL } }
+            - name: CALLBACK_SIGNING_SECRET
+              valueFrom: { secretKeyRef: { name: dispatcher-config, key: CALLBACK_SIGNING_SECRET } }
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8081 }
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }

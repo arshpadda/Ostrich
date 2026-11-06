@@ -51,6 +51,9 @@ class ChatMessage(models.Model):
     )
     content = fields.TextField()
     is_bot = fields.BooleanField(default=False)
+    # For bot replies: the user message this answers. Unique, so a retried sandbox
+    # callback (at-least-once delivery) cannot persist the same reply twice.
+    in_reply_to = fields.UUIDField(null=True, unique=True)
     created_at = fields.DatetimeField(auto_now_add=True)
 
     class Meta:

@@ -35,6 +35,10 @@ spec:
                 kubernetes.io/metadata.name: ai-gateway
         ports:
           - { protocol: TCP, port: 4000 }
+      # NOTE: the reply callback (POST to the control plane's public URL) also needs
+      # HTTPS egress. In prod, allow only that host via istio-egress-policy.yaml.
+      - ports:  # LOCAL only: reply callback to the host control plane (make dev-backend)
+          - { protocol: TCP, port: 8001 }
       - ports:  # HTTPS — LOCAL direct-LLM only; remove for gateway-only prod egress
           - { protocol: TCP, port: 443 }
   # Persistent per-sandbox workspace (survives hibernate/resume), mounted at
@@ -54,6 +58,9 @@ spec:
         - name: agent-harness
           image: ostrich-sandbox:latest
           imagePullPolicy: IfNotPresent
+          ports:
+            # Intake for dispatcher-delivered user messages (POST /deliver).
+            - { name: intake, containerPort: 8080 }
           env:
             # Full authenticated URL (redis://:<pw>@redis.redis-system...:6379)
             # from the redis-auth secret; created out-of-band, never committed.

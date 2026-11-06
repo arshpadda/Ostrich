@@ -38,7 +38,7 @@ and tool calls with the final message.
 | `system`      | `event` (`sandbox_provisioning` \| `connected` \| `sandbox_expired` \| `cancelled`) | Lifecycle signal; `cancelled` carries the interrupted `message_id` |
 | `token`       | `message_id`, `delta`                               | Incremental chunk of the bot reply |
 | `tool_call`   | `message_id`, `tool`, `args`, `status` (`running` \| `done`), `result_preview` | Agent tool activity |
-| `message`     | `message_id`, `role` (`bot`), `content`, `done: true` | Final assembled reply (this frame is persisted) |
+| `message`     | `message_id`, `role` (`bot`), `content`, `done: true` | Final assembled reply (persisted by the sandbox reply callback, see 12_durable_delivery.md) |
 | `error`       | `message`                                           | Friendly error (e.g. rate-limit, model unavailable) |
 
 ### Client → Server
@@ -66,23 +66,23 @@ buffer against the final `message.content` when `done` is received.
 User prompt ──► WS (user_message) ──► Control Plane
   │ persist user msg
   ▼
-Redis channel:sandbox:<user_id>
+Cloud Pub/Sub user-messages ──► Dispatcher ──► Sandbox (HTTP /deliver)
   ▼
 Sandbox: agent.astream_events()
   ├─ tool start/end ──► tool_call events ──► Redis ──► Control Plane ──► WS
   ├─ LLM token deltas ─► token events ─────► Redis ──► Control Plane ──► WS
-  └─ final answer ────► message event ─────► Redis ──► Control Plane
+  └─ final answer ────► POST /internal/sandbox/reply ──► Control Plane
                                                │ persist bot msg
-                                               ▼ WS ──► client reconciles
+                                               ▼ Redis ──► WS ──► client reconciles
 ```
 
 ## Backend Changes Required
 
 - **`sandbox/src/agent.py` / `main.py`**: replace `agent.invoke()` with
   `agent.astream_events()`; map LangGraph events to `token` / `tool_call` / `message`
-  frames and publish each to Redis.
+  frames and publish each to Redis (the final reply goes via the durable callback instead).
 - **`backend/src/controlplane/routers/ws.py`**: relay every event type to the
-  WebSocket; persist only the final `message`; emit `sandbox_provisioning` while the
+  WebSocket; the final `message` is persisted by `sandbox_callback.py`; emit `sandbox_provisioning` while the
   pod is being created.
 
 ## Open Questions / Assumptions

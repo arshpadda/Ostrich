@@ -152,3 +152,101 @@ resource "google_service_account_iam_binding" "workload_identity_binding" {
   ]
   depends_on = [google_container_cluster.primary]
 }
+
+# --- Durable delivery: Cloud Pub/Sub inbound queue ---
+# User messages are published here by the control plane and consumed by the
+# dispatcher, which validates the user/sandbox pairing and delivers to the pod.
+# See system_design/12_durable_delivery.md.
+
+variable "controlplane_service_account" {
+  type        = string
+  description = "Email of the service account the control plane (Cloud Run) runs as; granted publish on the inbound topic. Empty skips the grant."
+  default     = ""
+}
+
+resource "google_project_service" "pubsub_api" {
+  service            = "pubsub.googleapis.com"
+  disable_on_destroy = false
+}
+
+data "google_project" "current" {}
+
+# Messages that exhausted their delivery attempts land here for inspection/replay.
+resource "google_pubsub_topic" "user_messages_dlq" {
+  name       = "user-messages-dlq"
+  depends_on = [google_project_service.pubsub_api]
+}
+
+resource "google_pubsub_subscription" "user_messages_dlq_inspect" {
+  name                       = "user-messages-dlq-inspect"
+  topic                      = google_pubsub_topic.user_messages_dlq.id
+  message_retention_duration = "604800s" # 7 days
+  ack_deadline_seconds       = 30
+}
+
+resource "google_pubsub_topic" "user_messages" {
+  name                       = "user-messages"
+  message_retention_duration = "86400s" # topic-level retention enables replay
+  depends_on                 = [google_project_service.pubsub_api]
+}
+
+resource "google_pubsub_subscription" "user_messages_dispatcher" {
+  name  = "user-messages-dispatcher"
+  topic = google_pubsub_topic.user_messages.id
+
+  # Ordering key = sandbox name, so one sandbox sees its messages in send order.
+  enable_message_ordering = true
+  # A sandbox accepting a message is quick (it answers 202 once queued), so a short
+  # deadline is enough; the agent turn itself runs after the ack.
+  ack_deadline_seconds       = 30
+  message_retention_duration = "86400s"
+
+  retry_policy {
+    minimum_backoff = "2s"
+    maximum_backoff = "60s"
+  }
+
+  dead_letter_policy {
+    dead_letter_topic     = google_pubsub_topic.user_messages_dlq.id
+    max_delivery_attempts = 10
+  }
+}
+
+resource "google_service_account" "dispatcher_sa" {
+  account_id   = "ostrich-dispatcher"
+  display_name = "Ostrich Dispatcher"
+}
+
+resource "google_pubsub_subscription_iam_member" "dispatcher_subscriber" {
+  subscription = google_pubsub_subscription.user_messages_dispatcher.name
+  role         = "roles/pubsub.subscriber"
+  member       = "serviceAccount:${google_service_account.dispatcher_sa.email}"
+}
+
+resource "google_service_account_iam_binding" "dispatcher_workload_identity" {
+  service_account_id = google_service_account.dispatcher_sa.name
+  role               = "roles/iam.workloadIdentityUser"
+  members            = ["serviceAccount:${var.project_id}.svc.id.goog[dispatcher-system/ostrich-dispatcher]"]
+  depends_on         = [google_container_cluster.primary]
+}
+
+resource "google_pubsub_topic_iam_member" "controlplane_publisher" {
+  count  = var.controlplane_service_account == "" ? 0 : 1
+  topic  = google_pubsub_topic.user_messages.name
+  role   = "roles/pubsub.publisher"
+  member = "serviceAccount:${var.controlplane_service_account}"
+}
+
+# Pub/Sub's own service agent forwards exhausted messages to the DLQ topic and
+# must be able to ack them off the source subscription.
+resource "google_pubsub_topic_iam_member" "dlq_publisher" {
+  topic  = google_pubsub_topic.user_messages_dlq.name
+  role   = "roles/pubsub.publisher"
+  member = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+}
+
+resource "google_pubsub_subscription_iam_member" "dlq_source_subscriber" {
+  subscription = google_pubsub_subscription.user_messages_dispatcher.name
+  role         = "roles/pubsub.subscriber"
+  member       = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+}

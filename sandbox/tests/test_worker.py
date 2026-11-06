@@ -59,3 +59,27 @@ def test_process_turn_rolls_back_on_cancel():
 
     state = asyncio.run(scenario())
     assert state["messages"] == []  # rolled back, no dangling prompt
+
+
+def test_process_turn_uses_on_final_instead_of_redis_for_reply():
+    """With a durable callback the final reply must not also be published as a live frame."""
+
+    class _OneShotAgent:
+        async def astream_events(self, state, version):
+            yield {
+                "event": "on_chain_end",
+                "data": {"output": {"messages": [AIMessage(content="the answer")]}},
+            }
+
+    async def scenario():
+        redis_client, got = _FakeRedis(), []
+
+        async def on_final(content):
+            got.append(content)
+
+        await m.process_turn(_OneShotAgent(), redis_client, {"messages": []}, "q", "mid-1", on_final=on_final)
+        return redis_client.published, got
+
+    published, got = asyncio.run(scenario())
+    assert got == ["the answer"]
+    assert published == []
