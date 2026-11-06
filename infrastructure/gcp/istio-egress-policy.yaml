@@ -13,6 +13,9 @@ spec:
   - github.com
   - api.github.com
   - storage.googleapis.com
+  # TODO(prod): add the control plane's Cloud Run host (e.g. ostrich-controlplane-<hash>-uc.a.run.app).
+  # Sandboxes POST their final reply there; without it the reply falls back to
+  # live-only delivery and is not persisted.
   ports:
   - number: 443
     name: https

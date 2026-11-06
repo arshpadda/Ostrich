@@ -9,7 +9,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 from typing_extensions import TypedDict
 
-from src.tools import execute_bash, get_weather, read_file, save_workspace, write_file
+from src.tools import execute_bash, execute_python, get_weather, read_file, save_workspace, write_file
 
 # Gemini's OpenAI-compatible endpoint, used for local standalone runs. In the
 # cluster, requests instead flow through the LiteLLM proxy (also OpenAI-compatible),
@@ -66,7 +66,7 @@ def build_graph() -> CompiledStateGraph:
     fallback_llm = _build_llm(fallback_model) if fallback_model else None
 
     # 1. Bind our tools to the LLM so it knows they exist
-    tools = [get_weather, execute_bash, read_file, write_file, save_workspace]
+    tools = [get_weather, execute_bash, execute_python, read_file, write_file, save_workspace]
 
     primary_with_tools = primary_llm.bind_tools(tools)
     if fallback_llm:

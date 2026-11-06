@@ -1,6 +1,6 @@
 import json
 
-from src.tools import execute_bash, read_file, write_file
+from src.tools import execute_bash, execute_python, read_file, write_file
 
 
 def test_write_and_read_file(tmp_path, monkeypatch):
@@ -55,3 +55,20 @@ def test_execute_bash_truncates_output():
     result = json.loads(execute_bash.invoke({"command": "for i in $(seq 1 5000); do echo xxxxxxxxxx; done"}))
     assert result["status"] == "success"
     assert "[output truncated]" in result["data"]
+
+
+async def test_execute_python_tool_returns_contract_json():
+    """The execute_python tool wrapper returns JSON matching the documented schema
+    and preserves stateful execution end to end through the kernel singleton."""
+    from src.kernel import kernel_session
+
+    await kernel_session.start()
+    try:
+        first = json.loads(await execute_python.ainvoke({"code": "n = 7"}))
+        assert first["status"] == "success"
+        assert set(first) == {"status", "stdout", "result", "displays", "error", "execution_count", "namespace_reset"}
+
+        second = json.loads(await execute_python.ainvoke({"code": "print(n * 6)"}))
+        assert "42" in second["stdout"]
+    finally:
+        await kernel_session.shutdown()

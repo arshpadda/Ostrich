@@ -10,6 +10,7 @@ import uuid
 
 import litellm
 import redis.asyncio as redis
+from aiohttp import web
 from langchain_core.messages import HumanMessage
 from opentelemetry import metrics, trace
 from opentelemetry._logs import set_logger_provider
@@ -26,6 +27,8 @@ from prometheus_client import start_http_server
 from pythonjsonlogger import jsonlogger
 
 from src.agent import build_graph
+from src.delivery import make_intake_app, post_reply
+from src.kernel import kernel_session
 from src.protocol import event_to_frames, final_state_from_event
 
 # Initialize OpenTelemetry Metrics (Prometheus Scraping)
@@ -106,6 +109,8 @@ logger.setLevel(logging.INFO)
 SANDBOX_ID = os.getenv("SANDBOX_ID") or socket.gethostname()
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 CHANNEL_NAME = f"channel:sandbox:{SANDBOX_ID}"
+# HTTP intake for dispatcher-delivered user messages (durable inbound path).
+INTAKE_PORT = int(os.getenv("INTAKE_PORT", "8080"))
 
 
 def _friendly_error(exc: Exception) -> str:
@@ -116,6 +121,10 @@ def _friendly_error(exc: Exception) -> str:
     if any(s in err for s in ("503", "unavailable", "high demand")):
         return "The AI model is currently experiencing high demand and is unavailable. Please try again later."
     return "I'm sorry, I've encountered an unexpected error."
+
+
+def _final_frame(message_id: str, content: str) -> dict:
+    return {"type": "message", "message_id": message_id, "role": "bot", "content": content, "done": True}
 
 
 def _trim_history(messages: list) -> list:
@@ -130,8 +139,13 @@ def _trim_history(messages: list) -> list:
     return tail  # no human boundary found; return the window as-is
 
 
-async def process_turn(agent, redis_client: redis.Redis, state: dict, user_text: str, message_id: str) -> dict:
+async def process_turn(
+    agent, redis_client: redis.Redis, state: dict, user_text: str, message_id: str, on_final=None
+) -> dict:
     """Stream one agent turn, publishing token/tool_call/message frames.
+
+    The final reply goes to ``on_final(content)`` when given (durable callback to
+    the control plane), else is published to Redis as a live frame.
 
     Returns the updated conversation state for the next turn. Raises on error or
     cancellation; in both cases the unanswered prompt is rolled back so the next
@@ -168,10 +182,10 @@ async def process_turn(agent, redis_client: redis.Redis, state: dict, user_text:
     else:
         content = ""
 
-    await redis_client.publish(
-        CHANNEL_NAME,
-        json.dumps({"type": "message", "message_id": message_id, "role": "bot", "content": content, "done": True}),
-    )
+    if on_final is not None:
+        await on_final(content)
+    else:
+        await redis_client.publish(CHANNEL_NAME, json.dumps(_final_frame(message_id, content)))
     turn_latency.record(time.monotonic() - started, {"sandbox_id": SANDBOX_ID})
     logger.info("Completed turn %s in %.2fs", message_id, time.monotonic() - started)
     return state
@@ -191,6 +205,14 @@ async def main():
 
     logger.info("Starting Agent Harness for sandbox %s", SANDBOX_ID)
 
+    # Start the stateful Python kernel that backs the execute_python tool. A
+    # failure here must not take down the agent — the other tools (bash, file
+    # I/O) still work, and execute_python will surface its own error per-call.
+    try:
+        await kernel_session.start()
+    except Exception:
+        logger.error("Failed to start Jupyter kernel; execute_python will be unavailable.", exc_info=True)
+
     # Initialize LangGraph Agent
     agent = build_graph()
 
@@ -208,6 +230,23 @@ async def main():
     current_task: asyncio.Task | None = None
     current_message_id: str | None = None
 
+    reply_tasks: set[asyncio.Task] = set()
+
+    async def _send_reply(data: dict, message_id: str, content: str) -> None:
+        payload = {
+            "message_id": data["message_id"],
+            "sandbox_name": SANDBOX_ID,
+            "stream_message_id": message_id,
+            "content": content,
+            "token": data["callback_token"],
+        }
+        if await post_reply(data["callback_url"], payload):
+            return
+        # Durable path exhausted. Still show the user the reply live; history will
+        # not have it, so make the failure loud.
+        logger.error("Could not persist reply for %s via callback; sent live only", data["message_id"])
+        await r.publish(CHANNEL_NAME, json.dumps(_final_frame(message_id, content)))
+
     async def _run_turn(data: dict, message_id: str) -> None:
         nonlocal state
         user_text = data.get("content", "")
@@ -215,10 +254,18 @@ async def main():
         logger.info("Received from user: %s", user_text)
         ctx = extract(data.get("trace_context", {}))
         tracer = trace.get_tracer("sandbox-agent")
+
+        async def on_final(content: str) -> None:
+            # Fire-and-forget with retries, detached from the turn: a later cancel
+            # or new prompt must not drop an already-computed reply.
+            task = asyncio.create_task(_send_reply(data, message_id, content))
+            reply_tasks.add(task)
+            task.add_done_callback(reply_tasks.discard)
+
         try:
             with tracer.start_as_current_span("process_user_message", context=ctx):
                 logger.info("Streaming LangGraph turn %s...", message_id)
-                state = await process_turn(agent, r, state, user_text, message_id)
+                state = await process_turn(agent, r, state, user_text, message_id, on_final=on_final)
         except asyncio.CancelledError:
             logger.info("Turn %s cancelled", message_id)
             raise
@@ -244,37 +291,61 @@ async def main():
         current_task = None
         current_message_id = None
 
-    while True:
-        try:
-            async for message in pubsub.listen():
-                if not (message and message["type"] == "message"):
-                    continue
-                try:
-                    data = json.loads(message["data"])
-                except json.JSONDecodeError:
-                    logger.warning("Skipping non-JSON message on channel")
-                    continue
+    async def _start_turn(data: dict) -> None:
+        nonlocal current_task, current_message_id
+        # A new prompt supersedes any in-flight turn.
+        await _cancel_current()
+        current_message_id = str(uuid.uuid4())
+        current_task = asyncio.create_task(_run_turn(data, current_message_id))
 
-                # Explicit stop from the client.
-                if data.get("type") == "cancel":
-                    await _cancel_current()
-                    continue
+    # Messages arrive over HTTP from the dispatcher, queued so they start strictly
+    # in order. Only cancel still arrives on the Redis channel (it must bypass the queue).
+    intake_queue: asyncio.Queue = asyncio.Queue()
 
-                # Ignore frames we publish ourselves; only act on user prompts.
-                if data.get("role") != "user" and data.get("type") != "user_message":
-                    continue
+    async def _dispatch_loop() -> None:
+        while True:
+            await _start_turn(await intake_queue.get())
 
-                # A new prompt supersedes any in-flight turn.
-                await _cancel_current()
-                current_message_id = str(uuid.uuid4())
-                current_task = asyncio.create_task(_run_turn(data, current_message_id))
-        except redis.RedisError:
-            logger.warning("Redis connection issue, retrying...", exc_info=True)
-            await asyncio.sleep(1)
-            continue
-        except Exception:
-            logger.error("PubSub loop error", exc_info=True)
-            break
+    runner = web.AppRunner(make_intake_app(SANDBOX_ID, intake_queue))
+    await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", INTAKE_PORT).start()
+    dispatch_task = asyncio.create_task(_dispatch_loop())
+    logger.info("Intake listening on :%s", INTAKE_PORT)
+
+    try:
+        while True:
+            try:
+                async for message in pubsub.listen():
+                    if not (message and message["type"] == "message"):
+                        continue
+                    try:
+                        data = json.loads(message["data"])
+                    except json.JSONDecodeError:
+                        logger.warning("Skipping non-JSON message on channel")
+                        continue
+
+                    # Explicit stop from the client.
+                    if data.get("type") == "cancel":
+                        await _cancel_current()
+                        continue
+
+                    # Everything else on the channel is our own streamed frames
+                    # (user prompts no longer arrive here), so ignore it.
+            except redis.RedisError:
+                logger.warning("Redis connection issue, retrying...", exc_info=True)
+                await asyncio.sleep(1)
+                continue
+            except Exception:
+                logger.error("PubSub loop error", exc_info=True)
+                break
+    finally:
+        dispatch_task.cancel()
+        await runner.cleanup()
+        # Give in-flight reply callbacks a moment to land before the pod goes away.
+        if reply_tasks:
+            await asyncio.wait(reply_tasks, timeout=20)
+        # Release the kernel subprocess on shutdown so we don't leak it.
+        await kernel_session.shutdown()
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ from tortoise.contrib.fastapi import register_tortoise
 from .core.auth import init_firebase
 from .core.config import TORTOISE_ORM, settings
 from .core.logging_config import logging_middleware, setup_logging
-from .routers import chat, users
+from .routers import chat, sandbox_callback, users
 
 # Configure structured JSON logging
 logger = setup_logging()
@@ -104,6 +104,7 @@ async def health_check() -> Dict[str, str]:
 
 app.include_router(users.router)
 app.include_router(chat.router)
+app.include_router(sandbox_callback.router)
 from .routers import ws
 
 app.include_router(ws.router)

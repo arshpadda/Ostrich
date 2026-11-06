@@ -8,8 +8,10 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from firebase_admin import auth
 from opentelemetry.propagate import inject
 
+from ..core.config import settings
 from ..database.models import ChatMessage, SandboxSession, User
 from ..services.orchestrator import claim_sandbox, release_sandbox
+from ..services.publisher import publish_user_message
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +88,8 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
     # Signal the client that the sandbox channel is ready.
     await websocket.send_text(json.dumps({"type": "system", "event": "connected"}))
 
-    # 3. Read from Redis and forward to WebSocket.
+    # 3. Read live frames (tokens, tool calls, final reply) from Redis and forward
+    # them to the WebSocket.
     # Poll with get_message(timeout=...): it returns None when idle (no spurious
     # "loop crashed" churn that the listen() generator produced on read timeouts).
     async def listen_to_redis():
@@ -103,20 +106,15 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                     continue
                 payload_str = message["data"]
                 try:
-                    # Forward the frame to the frontend.
+                    # Skip the cancel frame we published ourselves on this channel.
+                    if json.loads(payload_str).get("type") == "cancel":
+                        continue
+                    # Forward the frame to the frontend. Nothing is persisted here:
+                    # the final reply is written to Postgres by the sandbox callback
+                    # (routers/sandbox_callback.py) before it is pushed on this channel.
                     await websocket.send_text(payload_str)
-                    # Persist only the final assembled reply. token/tool_call frames
-                    # are transport-only (see system_design/08_frontend_streaming.md).
-                    payload_json = json.loads(payload_str)
-                    if payload_json.get("type") == "message":
-                        await ChatMessage.create(
-                            user_id=user_obj.id,
-                            content=payload_json.get("content", ""),
-                            is_bot=True,
-                            sandbox_session=session,
-                        )
                 except Exception as e:
-                    logger.error("Error forwarding/persisting frame: %s", e)
+                    logger.error("Error forwarding frame: %s", e)
         except asyncio.CancelledError:
             logger.info("listen_to_redis task cancelled")
 
@@ -149,11 +147,34 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(...)):
                 user_id=user_obj.id, content=content, is_bot=False, sandbox_session=session
             )
 
-            # Publish to Sandbox with OpenTelemetry trace context
+            # Hand the message to the durable inbound queue (Cloud Pub/Sub). A
+            # dispatcher validates the user/sandbox pairing and delivers it to the
+            # pod; the sandbox replies via POST to callback_url. The OpenTelemetry
+            # trace context travels in the payload.
             trace_ctx = {}
             inject(trace_ctx)
-            payload = {"message_id": str(msg_obj.id), "role": "user", "content": content, "trace_context": trace_ctx}
-            await redis_client.publish(channel_name, json.dumps(payload))
+            body = {
+                "message_id": str(msg_obj.id),
+                "user_id": str(user_obj.id),
+                "sandbox_name": sandbox_name,
+                "content": content,
+                "trace_context": trace_ctx,
+                "callback_url": f"{settings.CONTROLPLANE_PUBLIC_URL}/internal/sandbox/reply",
+            }
+            try:
+                await publish_user_message(
+                    websocket.app,
+                    sandbox_name=sandbox_name,
+                    user_id=str(user_obj.id),
+                    message_id=str(msg_obj.id),
+                    body=body,
+                )
+            except Exception:
+                # The message is already saved; tell the user it was not delivered.
+                logger.error("Failed to publish message %s to Pub/Sub", msg_obj.id, exc_info=True)
+                await websocket.send_text(
+                    json.dumps({"type": "error", "message": "Could not deliver your message. Please retry."})
+                )
 
     except WebSocketDisconnect:
         pass
